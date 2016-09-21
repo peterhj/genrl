@@ -1,5 +1,9 @@
 use bit_set::{BitSet};
 
+use std::cell::{RefCell};
+use std::io::{Write};
+use std::rc::{Rc};
+
 pub trait Action {
   fn dim() -> usize;
 }
@@ -112,8 +116,8 @@ pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
   fn extract_legal_actions_set(&mut self, actions_set: &mut BitSet);
 }
 
-pub trait EnvRawRepr: Env {
-  fn extract_raw_observable(&mut self, buf: &mut [u8]);
+pub trait EnvSerialize: Env {
+  fn serialize(&mut self, buf: &mut Write);
 }
 
 pub trait EnvOpaqueRepr<Obs>: Env {
@@ -139,10 +143,34 @@ pub trait EnvConvert: Env {
 pub struct EpisodeStep<E> where E: Env {
   pub action:   E::Action,
   pub res:      Option<E::Response>,
-  pub next_env: E,
+  pub next_env: Rc<RefCell<E>>,
 }
 
-pub struct EpisodeTraj<E> where E: Env {
-  pub init_env: E,
+pub struct Episode<E> where E: Env {
+  pub init_env: Rc<RefCell<E>>,
   pub steps:    Vec<EpisodeStep<E>>,
+  pub suffixes: Vec<Option<E::Response>>,
+}
+
+impl<E> Episode<E> where E: Env {
+  pub fn fill_suffixes(&mut self) {
+    let horizon = self.steps.len();
+    for k in 0 .. horizon {
+      self.suffixes.push(self.steps[k].res);
+    }
+    let mut suffix = self.steps[horizon-1].res;
+    for k in (0 .. horizon-1).rev() {
+      match suffix {
+        None => {
+          suffix = self.suffixes[k];
+        }
+        Some(mut suffix) => {
+          if let Some(prefix) = self.suffixes[k] {
+            suffix.lreduce(prefix);
+          }
+          self.suffixes[k] = Some(suffix);
+        }
+      }
+    }
+  }
 }

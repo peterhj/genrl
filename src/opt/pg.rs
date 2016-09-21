@@ -1,52 +1,46 @@
-use env::{Env, EnvRepr, DiscreteAction, Response, EpisodeTraj};
+use env::{Env, DiscreteEnv, EnvRepr, DiscreteAction, Response, Episode};
 
 use operator::prelude::*;
-use operator::data::{SampleInput, SampleClass, SampleWeight};
-use operator::rw::{ReadBuffer, WriteBuffer};
+use operator::data::{SampleInput, SampleExtractInput, SampleClass, SampleWeight};
+use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
 use rng::xorshift::{Xorshiftplus128Rng};
 
+use std::cell::{RefCell};
 use std::cmp::{min};
 use std::marker::{PhantomData};
+use std::rc::{Rc};
 
-pub struct EpisodeStepSample<R> where R: Response {
-  pub obs:      Vec<f32>,
-  //pub env:      Rc<RefCell<E>>,
+pub struct EpisodeStepSample<E> where E: Env {
+  pub env:      Rc<RefCell<E>>,
   pub act_idx:  u32,
-  pub res:      R,
-  suffix_r:     Option<R>,
+  pub suffix_r: Option<E::Response>,
   extra_weight: Option<f32>,
 }
 
-impl<R> EpisodeStepSample<R> where R: Response {
-  pub fn new(obs: Vec<f32>, act_idx: u32, res: R) -> EpisodeStepSample<R> {
+impl<E> EpisodeStepSample<E> where E: Env {
+  pub fn new(env: Rc<RefCell<E>>, act_idx: u32, suffix_r: Option<E::Response>) -> EpisodeStepSample<E> {
     EpisodeStepSample{
-      obs:          obs,
+      env:          env,
       act_idx:      act_idx,
-      res:          res,
-      suffix_r:     None,
+      suffix_r:     suffix_r,
       extra_weight: None,
     }
   }
+}
 
-  pub fn append_suffix(&mut self, mut suffix_r: R) {
-    suffix_r.lreduce(self.res);
-    self.suffix_r = Some(suffix_r);
+impl<E> SampleExtractInput<f32> for EpisodeStepSample<E> where E: Env + EnvRepr<f32> {
+  fn extract_input(&self, output: &mut [f32]) {
+    self.env.borrow_mut().extract_observable(output);
   }
 }
 
-impl<R> SampleInput<f32> for EpisodeStepSample<R> where R: Response {
-  fn input(&self) -> &[f32] {
-    &self.obs
-  }
-}
-
-impl<R> SampleClass for EpisodeStepSample<R> where R: Response {
+impl<E> SampleClass for EpisodeStepSample<E> where E: Env {
   fn class(&self) -> Option<u32> {
     Some(self.act_idx)
   }
 }
 
-impl<R> SampleWeight for EpisodeStepSample<R> where R: Response {
+impl<E> SampleWeight for EpisodeStepSample<E> where E: Env {
   fn weight(&self) -> Option<f32> {
     self.suffix_r.map(|x| x.as_scalar() * self.extra_weight.unwrap_or(1.0))
   }
@@ -89,64 +83,77 @@ pub struct PolicyGradConfig {
   pub max_horizon:  usize,
 }
 
-pub struct PolicyGradWorker<E, T, Out, Op>
+pub struct PolicyGradWorker<E, Out, Op>
 where E: Env + EnvRepr<f32>,
-      //S: SampleInput<f32> + SampleClass + SampleWeight,
+      E::Action: DiscreteAction,
       Out: DiffPolicyOutput,
-      Op: Operator<T, EpisodeStepSample<E::Response>, Output=Out>
+      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
 {
   //policy:   DiffPolicy<E, T, S, Out, Op>,
   cfg:      PolicyGradConfig,
-  cache:    Vec<EpisodeStepSample<E::Response>>,
+  operator: Op,
+  cache:    Vec<EpisodeStepSample<E>>,
   grad_acc: Vec<f32>,
-  _marker:  PhantomData<(E, T, Out, Op)>,
+  _marker:  PhantomData<(E, Out, Op)>,
 }
 
-impl<E, T, Out, Op> PolicyGradWorker<E, T, Out, Op>
+impl<E, Out, Op> PolicyGradWorker<E, Out, Op>
 where E: Env + EnvRepr<f32>,
-      //S: SampleInput<f32> + SampleClass + SampleWeight,
+      E::Action: DiscreteAction,
       Out: DiffPolicyOutput,
-      Op: Operator<T, EpisodeStepSample<E::Response>, Output=Out>
+      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
 {
-  pub fn new() -> PolicyGradWorker<E, T, Out, Op> {
+  pub fn new() -> PolicyGradWorker<E, Out, Op> {
     unimplemented!();
   }
 }
 
-impl<E, T, Out, Op> OptWorker<T, EpisodeStepSample<E::Response>> for PolicyGradWorker<E, T, Out, Op>
+impl<E, Out, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Out, Op>
 where E: Env + EnvRepr<f32>,
-      //S: SampleInput<f32> + SampleClass + SampleWeight,
+      E::Action: DiscreteAction,
       Out: DiffPolicyOutput,
-      Op: Operator<T, EpisodeStepSample<E::Response>, Output=Out>
+      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
 {
   fn init_param(&mut self, rng: &mut Xorshiftplus128Rng) {
   }
 
-  fn load_local_param(&mut self, param_reader: &mut ReadBuffer<T>) { unimplemented!(); }
-  fn store_local_param(&mut self, param_writer: &mut WriteBuffer<T>) { unimplemented!(); }
-  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<T>) { unimplemented!(); }
+  fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
+  fn store_local_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
+  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
 
-  fn step(&mut self, samples: &mut Iterator<Item=EpisodeStepSample<E::Response>>) {
-    // FIXME(20160920): one sample = one episode step?
-
-    //self.operator.reset_loss();
-    //self.operator.reset_grad();
-    let num_batches = (self.cfg.minibatch_sz + self.cfg.batch_sz - 1) / self.cfg.batch_sz;
-    for batch in 0 .. num_batches {
-      let actual_batch_sz = min((batch+1) * self.cfg.batch_sz, self.cfg.minibatch_sz) - batch * self.cfg.batch_sz;
-      self.cache.clear();
-      for mut sample in samples.take(actual_batch_sz) {
+  fn step(&mut self, episodes: &mut Iterator<Item=Episode<E>>) {
+    self.operator.reset_loss();
+    self.operator.reset_grad();
+    self.cache.clear();
+    for episode in episodes.take(self.cfg.minibatch_sz) {
+      for k in 0 .. episode.steps.len() {
+        let mut sample = match k {
+          0 => EpisodeStepSample::new(episode.init_env.clone(), episode.steps[0].action.idx(), episode.suffixes[0]),
+          k => EpisodeStepSample::new(episode.steps[k-1].next_env.clone(), episode.steps[k].action.idx(), episode.suffixes[k]),
+        };
+        assert!(sample.weight().is_some());
+        // FIXME(20160920): baseline.
         sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
         self.cache.push(sample);
+        if self.cache.len() < self.cfg.batch_sz {
+          continue;
+        }
+        self.operator.load_data(&self.cache);
+        self.operator.forward(OpPhase::Learning);
+        self.operator.backward();
+        self.cache.clear();
       }
-      //self.operator.load_data(&self.cache);
-      //self.operator.forward(OpPhase::Learning);
-      //self.operator.backward();
     }
-    //self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
-    //self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
+    if !self.cache.is_empty() {
+      self.operator.load_data(&self.cache);
+      self.operator.forward(OpPhase::Learning);
+      self.operator.backward();
+      self.cache.clear();
+    }
+    self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
+    self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
   }
 
-  fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=EpisodeStepSample<E::Response>>) {
+  fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {
   }
 }

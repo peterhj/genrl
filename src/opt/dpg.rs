@@ -1,4 +1,4 @@
-use env::{Env, EpisodeTraj};
+use env::{Env, Episode};
 use replay::{ReplayCache};
 
 use std::marker::{PhantomData};
