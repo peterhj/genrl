@@ -48,14 +48,34 @@ impl Response for f32 {
 }
 
 #[derive(Clone, Copy)]
-pub struct DiscountedF32 {
-  pub value:    f32,
-  pub discount: f32,
+pub struct Averaged<T> where T: Copy {
+  pub value:    T,
+  pub horizon:  usize,
 }
 
-impl Response for DiscountedF32 {
+impl Response for Averaged<f32> {
   #[inline]
-  fn lreduce(&mut self, prefix: DiscountedF32) {
+  fn lreduce(&mut self, prefix: Averaged<f32>) {
+    assert_eq!(1, prefix.horizon);
+    self.value = self.value + (prefix.value - self.value) / (self.horizon + 1) as f32;
+    self.horizon += 1;
+  }
+
+  #[inline]
+  fn as_scalar(&self) -> f32 {
+    self.value
+  }
+}
+
+#[derive(Clone, Copy)]
+pub struct Discounted<T> where T: Copy {
+  pub value:    T,
+  pub discount: T,
+}
+
+impl Response for Discounted<f32> {
+  #[inline]
+  fn lreduce(&mut self, prefix: Discounted<f32>) {
     self.value = prefix.value + prefix.discount * self.value;
   }
 
@@ -74,15 +94,15 @@ pub trait Env: Clone + Default {
   /// other initial configuration.
   fn reset(&mut self, init: &Self::Init);
 
+  /// Check if the environment is at a terminal state (no more legal actions).
+  fn is_terminal(&mut self) -> bool;
+
   /// Check if an action is legal. Can be expensive if this involves simulating
-  /// the action using `try_action`.
+  /// the action using `step`.
   fn is_legal_action(&mut self, action: &Self::Action) -> bool;
 
   /// Try to execute an action, returning an error if the action is illegal.
   fn step(&mut self, action: &Self::Action) -> Result<Option<Self::Response>, ()>;
-
-  /// Check if the environment is at a terminal state (no more legal actions).
-  fn is_terminal(&mut self) -> bool;
 }
 
 pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
@@ -94,19 +114,26 @@ pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
 
 pub trait EnvRawRepr: Env {
   fn extract_raw_observable(&mut self, buf: &mut [u8]);
-  fn get_raw_observable(&mut self) -> Option<&[u8]> { None }
 }
 
-pub trait EnvRepr<O>: Env {
-  fn extract_observable(&mut self) -> O;
-  fn get_observable(&mut self) -> Option<&O> { None }
+pub trait EnvOpaqueRepr<Obs>: Env {
+  fn extract_opaque_observable(&mut self, obs: &mut Obs);
+}
+
+pub trait EnvRepr<T>: Env {
+  fn extract_observable(&mut self, obs: &mut [T]);
 }
 
 pub trait EnvConvert: Env {
   type Target: Env;
 
-  fn from_env(other: &Self::Target) -> Self where Self: Sized;
   fn clone_from_env(&mut self, other: &Self::Target);
+
+  fn from_env(other: &Self::Target) -> Self where Self: Sized {
+    let mut env: Self = Default::default();
+    env.clone_from_env(other);
+    env
+  }
 }
 
 pub struct EpisodeStep<E> where E: Env {

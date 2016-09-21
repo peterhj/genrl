@@ -10,4 +10,5 @@ path = "src/lib.rs"
 [dependencies]
 bit-set = "*"
 rand = "*"
-#rng = { path = "../librng" }
+operator = { path = "../liboperator" }
+rng = { path = "../librng" }
