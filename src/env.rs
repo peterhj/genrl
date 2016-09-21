@@ -128,12 +128,10 @@ pub trait EnvRepr<T>: Env {
   fn extract_observable(&mut self, obs: &mut [T]);
 }
 
-pub trait EnvConvert: Env {
-  type Target: Env;
+pub trait EnvConvert<Target>: Env where Target: Env {
+  fn clone_from_env(&mut self, other: &Target);
 
-  fn clone_from_env(&mut self, other: &Self::Target);
-
-  fn from_env(other: &Self::Target) -> Self where Self: Sized {
+  fn from_env(other: &Target) -> Self where Self: Sized {
     let mut env: Self = Default::default();
     env.clone_from_env(other);
     env
@@ -152,7 +150,39 @@ pub struct Episode<E> where E: Env {
   pub suffixes: Vec<Option<E::Response>>,
 }
 
+impl<E> Episode<E> where E: Env + EnvConvert<E> {
+  pub fn sample_discrete(&mut self, _policy: ()) {
+    let next_env: E = match self.steps.len() {
+      0 => EnvConvert::from_env(&*self.init_env.borrow()),
+      k => EnvConvert::from_env(&*self.steps[k-1].next_env.borrow()),
+    };
+    /*self.steps.push(EpisodeStep{
+      action:   E::Action::default(),*/
+  }
+}
+
 impl<E> Episode<E> where E: Env {
+  pub fn new() -> Episode<E> {
+    Episode{
+      init_env: Rc::new(RefCell::new(Default::default())),
+      steps:    vec![],
+      suffixes: vec![],
+    }
+  }
+
+  pub fn reset(&mut self, init_cfg: &E::Init) {
+    self.init_env.borrow_mut().reset(init_cfg);
+    self.steps.clear();
+    self.suffixes.clear();
+  }
+
+  pub fn terminated(&self) -> bool {
+    match self.steps.len() {
+      0   => self.init_env.borrow_mut().is_terminal(),
+      len => self.steps[len-1].next_env.borrow_mut().is_terminal(),
+    }
+  }
+
   pub fn fill_suffixes(&mut self) {
     let horizon = self.steps.len();
     for k in 0 .. horizon {
