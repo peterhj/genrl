@@ -1,3 +1,5 @@
+use operator::{DiffOperatorOutput};
+
 use bit_set::{BitSet};
 
 use std::cell::{RefCell};
@@ -89,7 +91,7 @@ impl Response for Discounted<f32> {
   }
 }
 
-pub trait Env: Clone + Default {
+pub trait Env: Default {
   type Init;
   type Action: Action;
   type Response: Response;
@@ -125,6 +127,7 @@ pub trait EnvOpaqueRepr<Obs>: Env {
 }
 
 pub trait EnvRepr<T>: Env {
+  fn observable_len(&self) -> usize;
   fn extract_observable(&mut self, obs: &mut [T]);
 }
 
@@ -151,13 +154,14 @@ pub struct Episode<E> where E: Env {
 }
 
 impl<E> Episode<E> where E: Env + EnvConvert<E> {
-  pub fn sample_discrete(&mut self, _policy: ()) {
+  pub fn sample_discrete<T, Op>(&mut self, _policy: &mut Op) where Op: DiffOperatorOutput<T, f32> {
     let next_env: E = match self.steps.len() {
       0 => EnvConvert::from_env(&*self.init_env.borrow()),
       k => EnvConvert::from_env(&*self.steps[k-1].next_env.borrow()),
     };
     /*self.steps.push(EpisodeStep{
       action:   E::Action::default(),*/
+    unimplemented!();
   }
 }
 

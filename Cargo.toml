@@ -14,5 +14,6 @@ path = "examples/train-cartpole.rs"
 [dependencies]
 bit-set = "*"
 rand = "*"
+neuralops = { path = "../neuralops" }
 operator = { path = "../liboperator" }
 rng = { path = "../librng" }

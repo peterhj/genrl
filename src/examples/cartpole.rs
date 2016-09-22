@@ -2,6 +2,8 @@ use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response};
 
 use std::f32::consts::{PI};
 
+// XXX: This version of the cart-pole is based on the one in rl-gym.
+
 #[derive(Clone, Copy)]
 pub enum CartpoleAction {
   Plus,
@@ -76,7 +78,7 @@ struct CartpoleState {
   terminated:   bool,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct CartpoleEnv {
   cfg:              CartpoleConfig,
   total_mass:       f32,
@@ -144,6 +146,10 @@ impl EnvConvert<CartpoleEnv> for CartpoleEnv {
 }
 
 impl EnvRepr<f32> for CartpoleEnv {
+  fn observable_len(&self) -> usize {
+    4
+  }
+
   fn extract_observable(&mut self, obs: &mut [f32]) {
     obs[0] = self.state.x;
     obs[1] = self.state.x_dot;

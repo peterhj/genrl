@@ -67,18 +67,17 @@ pub struct DiscretePolicyGrad<E, P> where E: Env, P: DiscretePolicy<Env=E> {
 impl<E, P> DiscretePolicyGrad<E, P> where E: Env, P: DiscretePolicy<Env=E> {
 }*/
 
-pub trait DiffPolicyOutput {
+/*pub trait DiffPolicyOutput {
   fn action_probabilities(&self) -> &[f32];
-}
+}*/
 
-pub struct DiffPolicy<E, T, S, Out, Op>
+/*pub struct DiffPolicy<E, T, S, Op>
 where E: Env + EnvRepr<f32>,
-      Out: DiffPolicyOutput,
-      Op: Operator<T, S, Output=Out>
+      //Out: DiffPolicyOutput,
+      Op: Operator<T, S> + DiffOperatorOutput<T, f32>,
 {
-  op:       Op,
-  _marker:  PhantomData<(E, T, S, Out)>,
-}
+  _marker:  PhantomData<(E, T, S)>,
+}*/
 
 pub struct PolicyGradConfig {
   pub batch_sz:     usize,
@@ -88,36 +87,36 @@ pub struct PolicyGradConfig {
   pub baseline:     f32,
 }
 
-pub struct PolicyGradWorker<E, Out, Op>
+pub struct PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32>,
       E::Action: DiscreteAction,
-      Out: DiffPolicyOutput,
-      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
+      //Out: DiffPolicyOutput,
+      Op: Operator<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, f32>,
 {
-  //policy:   DiffPolicy<E, T, S, Out, Op>,
+  //policy:   DiffPolicy<E, T, S, Op>,
   cfg:      PolicyGradConfig,
-  operator: Op,
+  pub operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
   grad_acc: Vec<f32>,
-  _marker:  PhantomData<(E, Out, Op)>,
+  _marker:  PhantomData<(E, Op)>,
 }
 
-impl<E, Out, Op> PolicyGradWorker<E, Out, Op>
+impl<E, Op> PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32>,
       E::Action: DiscreteAction,
-      Out: DiffPolicyOutput,
-      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
+      //Out: DiffPolicyOutput,
+      Op: Operator<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, f32>,
 {
-  pub fn new() -> PolicyGradWorker<E, Out, Op> {
+  pub fn new(op: Op) -> PolicyGradWorker<E, Op> {
     unimplemented!();
   }
 }
 
-impl<E, Out, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Out, Op>
+impl<E, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32>,
       E::Action: DiscreteAction,
-      Out: DiffPolicyOutput,
-      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
+      //Out: DiffPolicyOutput,
+      Op: Operator<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, f32>,
 {
   fn init_param(&mut self, rng: &mut Xorshiftplus128Rng) {
     self.operator.init_param(rng);
@@ -165,11 +164,11 @@ where E: Env + EnvRepr<f32>,
   }
 }
 
-impl<E, Out, Op> OptStats<()> for PolicyGradWorker<E, Out, Op>
+impl<E, Op> OptStats<()> for PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32>,
       E::Action: DiscreteAction,
-      Out: DiffPolicyOutput,
-      Op: Operator<f32, EpisodeStepSample<E>, Output=Out>
+      //Out: DiffPolicyOutput,
+      Op: Operator<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, f32>,
 {
   fn reset_opt_stats(&mut self) {
     unimplemented!();
