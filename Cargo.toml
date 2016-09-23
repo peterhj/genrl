@@ -17,3 +17,4 @@ rand = "*"
 neuralops = { path = "../neuralops" }
 operator = { path = "../liboperator" }
 rng = { path = "../librng" }
+sharedmem = { path = "../libsharedmem" }

@@ -1,12 +1,17 @@
+//use discrete::{DiscreteSampler32};
+
 use operator::{DiffOperatorOutput};
+use sharedmem::{RwSlice};
 
 use bit_set::{BitSet};
 
+use rand::{Rng};
 use std::cell::{RefCell};
+use std::fmt::{Debug};
 use std::io::{Write};
 use std::rc::{Rc};
 
-pub trait Action {
+pub trait Action: Clone {
   fn dim() -> usize;
 }
 
@@ -21,7 +26,7 @@ pub trait DiscreteAction: Action + Copy {
   fn idx(&self) -> u32;
 }
 
-pub trait Response: Copy {
+pub trait Response: Copy + Debug {
   fn lreduce(&mut self, prefix: Self);
   fn as_scalar(&self) -> f32;
 }
@@ -44,6 +49,7 @@ impl Response for bool {
 impl Response for f32 {
   #[inline]
   fn lreduce(&mut self, prefix: f32) {
+    //println!("DEBUG: lreduce: {:e} {:e}", prefix, *self);
     *self += prefix;
   }
 
@@ -53,7 +59,7 @@ impl Response for f32 {
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Averaged<T> where T: Copy {
   pub value:    T,
   pub horizon:  usize,
@@ -62,18 +68,19 @@ pub struct Averaged<T> where T: Copy {
 impl Response for Averaged<f32> {
   #[inline]
   fn lreduce(&mut self, prefix: Averaged<f32>) {
-    assert_eq!(1, prefix.horizon);
-    self.value = self.value + (prefix.value - self.value) / (self.horizon + 1) as f32;
-    self.horizon += 1;
+    assert_eq!(self.horizon, prefix.horizon);
+    //self.value = self.value + (prefix.value - self.value) / (self.horizon + 1) as f32;
+    //self.horizon += 1;
+    self.value += prefix.value;
   }
 
   #[inline]
   fn as_scalar(&self) -> f32 {
-    self.value
+    self.value / self.horizon as f32
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Discounted<T> where T: Copy {
   pub value:    T,
   pub discount: T,
@@ -98,7 +105,7 @@ pub trait Env: Default {
 
   /// Reset the environment according to the initial state distribution and
   /// other initial configuration.
-  fn reset(&mut self, init: &Self::Init);
+  fn reset<R>(&mut self, init: &Self::Init, rng: &mut R) where R: Rng + Sized;
 
   /// Check if the environment is at a terminal state (no more legal actions).
   fn is_terminal(&mut self) -> bool;
@@ -141,27 +148,37 @@ pub trait EnvConvert<Target>: Env where Target: Env {
   }
 }
 
+//#[derive(Clone)]
 pub struct EpisodeStep<E> where E: Env {
   pub action:   E::Action,
   pub res:      Option<E::Response>,
   pub next_env: Rc<RefCell<E>>,
 }
 
+impl<E> Clone for EpisodeStep<E> where E: Env {
+  fn clone(&self) -> EpisodeStep<E> {
+    EpisodeStep{
+      action:   self.action.clone(),
+      res:      self.res,
+      next_env: self.next_env.clone(),
+    }
+  }
+}
+
+//#[derive(Clone)]
 pub struct Episode<E> where E: Env {
   pub init_env: Rc<RefCell<E>>,
   pub steps:    Vec<EpisodeStep<E>>,
   pub suffixes: Vec<Option<E::Response>>,
 }
 
-impl<E> Episode<E> where E: Env + EnvConvert<E> {
-  pub fn sample_discrete<T, Op>(&mut self, _policy: &mut Op) where Op: DiffOperatorOutput<T, f32> {
-    let next_env: E = match self.steps.len() {
-      0 => EnvConvert::from_env(&*self.init_env.borrow()),
-      k => EnvConvert::from_env(&*self.steps[k-1].next_env.borrow()),
-    };
-    /*self.steps.push(EpisodeStep{
-      action:   E::Action::default(),*/
-    unimplemented!();
+impl<E> Clone for Episode<E> where E: Env {
+  fn clone(&self) -> Episode<E> {
+    Episode{
+      init_env: self.init_env.clone(),
+      steps:    self.steps.clone(),
+      suffixes: self.suffixes.clone(),
+    }
   }
 }
 
@@ -174,8 +191,8 @@ impl<E> Episode<E> where E: Env {
     }
   }
 
-  pub fn reset(&mut self, init_cfg: &E::Init) {
-    self.init_env.borrow_mut().reset(init_cfg);
+  pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng + Sized {
+    self.init_env.borrow_mut().reset(init_cfg, rng);
     self.steps.clear();
     self.suffixes.clear();
   }
@@ -189,22 +206,30 @@ impl<E> Episode<E> where E: Env {
 
   pub fn fill_suffixes(&mut self) {
     let horizon = self.steps.len();
+    self.suffixes.clear();
     for k in 0 .. horizon {
       self.suffixes.push(self.steps[k].res);
     }
     let mut suffix = self.steps[horizon-1].res;
+    //println!("DEBUG: fill suffixes (init): {:?}", suffix);
     for k in (0 .. horizon-1).rev() {
-      match suffix {
-        None => {
-          suffix = self.suffixes[k];
-        }
-        Some(mut suffix) => {
-          if let Some(prefix) = self.suffixes[k] {
-            suffix.lreduce(prefix);
-          }
-          self.suffixes[k] = Some(suffix);
-        }
+      //println!("DEBUG: fill suffixes ({}): {:?}", k, suffix);
+      if suffix.is_none() {
+        suffix = self.steps[k].res;
+      } else if let Some(prefix) = self.steps[k].res {
+        //println!("DEBUG: before lreduce: {:?} <- {:?}", suffix, prefix);
+        suffix.as_mut().unwrap().lreduce(prefix);
+        //println!("DEBUG: after lreduce: {:?}", suffix);
       }
+      self.suffixes[k] = suffix;
+    }
+  }
+
+  pub fn response_value(&self) -> Option<f32> {
+    if !self.suffixes.is_empty() {
+      self.suffixes[0].map(|r| r.as_scalar())
+    } else {
+      None
     }
   }
 }

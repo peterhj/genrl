@@ -1,5 +1,8 @@
-use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response};
+use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, Averaged, Discounted};
 
+use rand::{Rng};
+use rand::distributions::{IndependentSample};
+use rand::distributions::range::{Range};
 use std::f32::consts::{PI};
 
 // XXX: This version of the cart-pole is based on the one in rl-gym.
@@ -52,6 +55,8 @@ pub struct CartpoleConfig {
   pub time_delta:   f32,
   pub x_thresh:     f32,
   pub theta_thresh: f32,
+  pub horizon:      usize,
+  pub discount:     f32,
 }
 
 impl Default for CartpoleConfig {
@@ -65,6 +70,8 @@ impl Default for CartpoleConfig {
       time_delta:     0.02,
       x_thresh:       2.4,
       theta_thresh:   (12.0 / 360.0) * 2.0 * PI,
+      horizon:        100,
+      discount:       0.99,
     }
   }
 }
@@ -89,30 +96,33 @@ pub struct CartpoleEnv {
 impl Env for CartpoleEnv {
   type Init     = CartpoleConfig;
   type Action   = CartpoleAction;
-  type Response = f32;
+  type Response = Discounted<f32>;
 
-  fn reset(&mut self, init: &CartpoleConfig) {
+  fn reset<R>(&mut self, init: &CartpoleConfig, rng: &mut R) where R: Rng + Sized {
     self.cfg = *init;
     self.total_mass = self.cfg.cart_mass + self.cfg.pole_mass;
     self.pole_mass_length = 0.5 * self.cfg.pole_mass * self.cfg.pole_length;
     // FIXME: randomly initialize state.
-    self.state.x = 0.0;
-    self.state.x_dot = 0.0;
-    self.state.theta = 0.0;
-    self.state.theta_dot = 0.0;
+    let dist = Range::new(-0.05, 0.05);
+    self.state.x = dist.ind_sample(rng);
+    self.state.x_dot = dist.ind_sample(rng);
+    self.state.theta = dist.ind_sample(rng);
+    self.state.theta_dot = dist.ind_sample(rng);
     self.state.terminated = false;
   }
 
   fn is_terminal(&mut self) -> bool {
-    self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh
+    //self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh
+    false
   }
 
   fn is_legal_action(&mut self, action: &CartpoleAction) -> bool {
     true
   }
 
-  fn step(&mut self, action: &CartpoleAction) -> Result<Option<f32>, ()> {
-    if self.is_terminal() {
+  fn step(&mut self, action: &CartpoleAction) -> Result<Option<Discounted<f32>>, ()> {
+    //if self.is_terminal() {
+    if self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh {
       self.state.terminated = true;
     }
     let force = self.cfg.force_mag * action.as_scalar();
@@ -129,9 +139,9 @@ impl Env for CartpoleEnv {
     next_state.terminated = self.state.terminated;
     self.state = next_state;
     if self.state.terminated {
-      Ok(Some(0.0))
+      Ok(Some(Discounted{value: 0.0, discount: self.cfg.discount}))
     } else {
-      Ok(Some(1.0))
+      Ok(Some(Discounted{value: 1.0, discount: self.cfg.discount}))
     }
   }
 }
