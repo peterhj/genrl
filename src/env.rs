@@ -60,23 +60,50 @@ impl Response for f32 {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Averaged<T> where T: Copy {
+pub struct HorizonAveraged<T> where T: Copy {
   pub value:    T,
   pub horizon:  usize,
 }
 
-impl Response for Averaged<f32> {
+impl Response for HorizonAveraged<f32> {
   #[inline]
-  fn lreduce(&mut self, prefix: Averaged<f32>) {
+  fn lreduce(&mut self, prefix: HorizonAveraged<f32>) {
     assert_eq!(self.horizon, prefix.horizon);
-    //self.value = self.value + (prefix.value - self.value) / (self.horizon + 1) as f32;
-    //self.horizon += 1;
     self.value += prefix.value;
   }
 
   #[inline]
   fn as_scalar(&self) -> f32 {
     self.value / self.horizon as f32
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OnlineAveraged<T> where T: Copy {
+  pub value:    T,
+  pub count:    usize,
+}
+
+impl<T> OnlineAveraged<T> where T: Copy {
+  pub fn new(value: T) -> OnlineAveraged<T> {
+    OnlineAveraged{
+      value:    value,
+      count:    1,
+    }
+  }
+}
+
+impl Response for OnlineAveraged<f32> {
+  #[inline]
+  fn lreduce(&mut self, prefix: OnlineAveraged<f32>) {
+    assert_eq!(1, prefix.count);
+    self.value = self.value + (prefix.value - self.value) / (self.count + 1) as f32;
+    self.count += 1;
+  }
+
+  #[inline]
+  fn as_scalar(&self) -> f32 {
+    self.value
   }
 }
 
@@ -211,22 +238,19 @@ impl<E> Episode<E> where E: Env {
       self.suffixes.push(self.steps[k].res);
     }
     let mut suffix = self.steps[horizon-1].res;
-    //println!("DEBUG: fill suffixes (init): {:?}", suffix);
     for k in (0 .. horizon-1).rev() {
-      //println!("DEBUG: fill suffixes ({}): {:?}", k, suffix);
       if suffix.is_none() {
         suffix = self.steps[k].res;
       } else if let Some(prefix) = self.steps[k].res {
-        //println!("DEBUG: before lreduce: {:?} <- {:?}", suffix, prefix);
         suffix.as_mut().unwrap().lreduce(prefix);
-        //println!("DEBUG: after lreduce: {:?}", suffix);
       }
       self.suffixes[k] = suffix;
     }
   }
 
-  pub fn response_value(&self) -> Option<f32> {
+  pub fn value(&self) -> Option<f32> {
     if !self.suffixes.is_empty() {
+      assert_eq!(self.steps.len(), self.suffixes.len());
       self.suffixes[0].map(|r| r.as_scalar())
     } else {
       None

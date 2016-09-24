@@ -5,10 +5,9 @@ extern crate rng;
 
 extern crate rand;
 
-use genrl::examples::bandit::{BanditConfig, BanditEnv};
+//use genrl::examples::bandit::{BanditConfig, BanditEnv};
 use genrl::examples::cartpole::{CartpoleConfig, CartpoleEnv};
-//use genrl::discrete::{DiscreteSampler32};
-use genrl::env::{Action, Episode}; //, batch_sample_discrete};
+use genrl::env::{Episode};
 use genrl::opt::pg::{PolicyGradConfig, PolicyGradWorker};
 use neuralops::prelude::*;
 use operator::prelude::*;
@@ -38,21 +37,21 @@ fn main() {
   }));
   /*op_cfg.push(SeqOperatorConfig::Affine(AffineOperatorConfig{
     batch_sz:   batch_sz,
-    in_dim:     10,
-    out_dim:    32,
+    in_dim:     4,
+    out_dim:    16,
     act_kind:   ActivationKind::Rect,
     w_init:     ParamInitKind::Kaiming,
   }));
-  op_cfg.push(SeqOperatorConfig::Affine(AffineOperatorConfig{
+  /*op_cfg.push(SeqOperatorConfig::Affine(AffineOperatorConfig{
     batch_sz:   batch_sz,
-    in_dim:     32,
-    out_dim:    32,
+    in_dim:     16,
+    out_dim:    16,
     act_kind:   ActivationKind::Rect,
     w_init:     ParamInitKind::Kaiming,
-  }));
+  }));*/
   op_cfg.push(SeqOperatorConfig::Affine(AffineOperatorConfig{
     batch_sz:   batch_sz,
-    in_dim:     32,
+    in_dim:     16,
     out_dim:    2,
     act_kind:   ActivationKind::Identity,
     w_init:     ParamInitKind::Kaiming,
@@ -64,24 +63,23 @@ fn main() {
   }));
   let op = SeqOperator::new(op_cfg, OpCapability::Backward);
 
-  let mut episodes_batch: Vec<Episode<CartpoleEnv>> = Vec::with_capacity(minibatch_sz);
-
   let pg_cfg = PolicyGradConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
-    step_size:      0.0001,
+    step_size:      0.1,
     max_horizon:    horizon,
     baseline:       0.0,
   };
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-  let mut policy_grad: PolicyGradWorker<CartpoleEnv, SeqOperator<f32, _>> = PolicyGradWorker::new(pg_cfg, op);
+  let mut policy_grad: PolicyGradWorker<CartpoleEnv, _> = PolicyGradWorker::new(pg_cfg, op);
   policy_grad.init_param(&mut rng);
 
+  let mut episodes_batch: Vec<Episode<CartpoleEnv>> = Vec::with_capacity(minibatch_sz);
+  for _ in 0 .. minibatch_sz {
+    episodes_batch.push(Episode::new());
+  }
+
   for iter_nr in 0 .. max_iter {
-    episodes_batch.clear();
-    for idx in 0 .. minibatch_sz {
-      episodes_batch.push(Episode::new());
-    }
     policy_grad.sample(&mut episodes_batch, &init_cfg, &mut rng);
     let mut episodes_iter = episodes_batch.clone();
     policy_grad.step(&mut episodes_iter.drain( .. ));
@@ -90,7 +88,7 @@ fn main() {
       //policy_grad.reset_opt_stats();
       let mut avg_value = 0.0;
       for episode in episodes_batch.iter() {
-        avg_value += episode.response_value().unwrap_or(0.0);
+        avg_value += episode.value().unwrap_or(0.0);
       }
       avg_value /= episodes_batch.len() as f32;
       println!("DEBUG: iter: {} res: {:?}", iter_nr, avg_value);

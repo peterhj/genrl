@@ -1,4 +1,4 @@
-use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, Averaged, Discounted};
+use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, HorizonAveraged};
 
 use rng::xorshift::{Xorshiftplus128Rng};
 
@@ -64,7 +64,7 @@ impl Default for BanditEnv {
 impl Env for BanditEnv {
   type Init     = BanditConfig;
   type Action   = BanditAction;
-  type Response = Averaged<f32>;
+  type Response = HorizonAveraged<f32>;
 
   fn reset<R>(&mut self, init: &BanditConfig, rng: &mut R) where R: Rng + Sized {
     self.rng = Xorshiftplus128Rng::new(rng);
@@ -78,12 +78,12 @@ impl Env for BanditEnv {
     true
   }
 
-  fn step(&mut self, action: &BanditAction) -> Result<Option<Averaged<f32>>, ()> {
+  fn step(&mut self, action: &BanditAction) -> Result<Option<HorizonAveraged<f32>>, ()> {
     //self.dist.ind_sample(&mut self.rng);
     if action.idx == 7 {
-      Ok(Some(Averaged{value: 1.0, horizon: 100}))
+      Ok(Some(HorizonAveraged{value: 1.0, horizon: 100}))
     } else {
-      Ok(Some(Averaged{value: 0.0, horizon: 100}))
+      Ok(Some(HorizonAveraged{value: 0.0, horizon: 100}))
     }
   }
 }

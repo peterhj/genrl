@@ -1,4 +1,4 @@
-use discrete::{DiscreteDist32, DiscreteSampler};
+use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Episode, EpisodeStep};
 
 use operator::prelude::*;
@@ -162,8 +162,8 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
   pub operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
   grad_acc: Vec<f32>,
-  act_dist: DiscreteSampler,
-  //act_dist: DiscreteDist32,
+  //act_dist: DiscreteSampler,
+  act_dist: DiscreteDist32,
   //episodes: Vec<EpisodeSample<E>>,
 }
 
@@ -181,16 +181,14 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
       grad_acc: grad_acc,
-      act_dist: DiscreteSampler::with_capacity(<E::Action as Action>::dim()),
-      //act_dist: DiscreteDist32::new(<E::Action as Action>::dim()),
+      //act_dist: DiscreteSampler::with_capacity(<E::Action as Action>::dim()),
+      act_dist: DiscreteDist32::new(<E::Action as Action>::dim()),
     }
   }
 
   pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for episode in episodes {
-      self.cache.clear();
-      //episode.init_env.borrow_mut().reset(init_cfg, rng);
       episode.reset(init_cfg, rng);
       for k in episode.steps.len() .. self.cfg.max_horizon {
         if episode.terminated() {
@@ -200,22 +198,19 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        //if prev_env.borrow_mut().is_terminal() {
         let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
         let sample = EpisodeStepSample::new(prev_env, None, None);
+        self.cache.clear();
         self.cache.push(sample);
 
         self.operator.load_data(&self.cache);
         self.operator.forward(OpPhase::Inference);
-        self.cache.clear();
 
         let output = self.operator.get_output();
-        //println!("DEBUG: policy output ({}): {:?}", k, (&output.borrow()[ .. action_dim]));
         self.act_dist.reset(&output.borrow()[ .. action_dim]);
         let act_idx = self.act_dist.sample(rng).unwrap();
         let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
         if let Ok(res) = next_env.step(&action) {
-          //println!("DEBUG: sample step ({}): res: {:?}", k, res);
           episode.steps.push(EpisodeStep{
             action:   action,
             res:      res,
@@ -241,7 +236,9 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
       E::Action: DiscreteAction,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {
-  fn init_param(&mut self, rng: &mut Xorshiftplus128Rng) {
+  type Rng = Op::Rng;
+
+  fn init_param(&mut self, rng: &mut Self::Rng) {
     self.operator.init_param(rng);
   }
 
@@ -266,7 +263,6 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
               episode.suffixes[k]),
         };
         assert!(sample.weight().is_some());
-        // FIXME(20160920): baseline.
         sample.init_weight(self.cfg.baseline);
         sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
         self.cache.push(sample);

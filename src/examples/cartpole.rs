@@ -1,11 +1,13 @@
-use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, Averaged, Discounted};
+use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, OnlineAveraged, Discounted};
 
 use rand::{Rng};
 use rand::distributions::{IndependentSample};
 use rand::distributions::range::{Range};
 use std::f32::consts::{PI};
 
-// XXX: This version of the cart-pole is based on the one in rl-gym.
+// XXX: This version of the cart-pole is based on the one in rl-gym, which
+// itself is based on Sutton's original C code:
+// <https://webdocs.cs.ualberta.ca/~sutton/book/code/pole.c>
 
 #[derive(Clone, Copy)]
 pub enum CartpoleAction {
@@ -85,7 +87,7 @@ struct CartpoleState {
   terminated:   bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct CartpoleEnv {
   cfg:              CartpoleConfig,
   total_mass:       f32,
@@ -96,13 +98,12 @@ pub struct CartpoleEnv {
 impl Env for CartpoleEnv {
   type Init     = CartpoleConfig;
   type Action   = CartpoleAction;
-  type Response = Discounted<f32>;
+  type Response = OnlineAveraged<f32>;
 
   fn reset<R>(&mut self, init: &CartpoleConfig, rng: &mut R) where R: Rng + Sized {
     self.cfg = *init;
     self.total_mass = self.cfg.cart_mass + self.cfg.pole_mass;
     self.pole_mass_length = 0.5 * self.cfg.pole_mass * self.cfg.pole_length;
-    // FIXME: randomly initialize state.
     let dist = Range::new(-0.05, 0.05);
     self.state.x = dist.ind_sample(rng);
     self.state.x_dot = dist.ind_sample(rng);
@@ -120,7 +121,7 @@ impl Env for CartpoleEnv {
     true
   }
 
-  fn step(&mut self, action: &CartpoleAction) -> Result<Option<Discounted<f32>>, ()> {
+  fn step(&mut self, action: &CartpoleAction) -> Result<Option<OnlineAveraged<f32>>, ()> {
     //if self.is_terminal() {
     if self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh {
       self.state.terminated = true;
@@ -138,10 +139,15 @@ impl Env for CartpoleEnv {
     next_state.theta_dot = self.state.theta_dot + self.cfg.time_delta * theta_acc;
     next_state.terminated = self.state.terminated;
     self.state = next_state;
-    if self.state.terminated {
+    /*if self.state.terminated {
       Ok(Some(Discounted{value: 0.0, discount: self.cfg.discount}))
     } else {
       Ok(Some(Discounted{value: 1.0, discount: self.cfg.discount}))
+    }*/
+    if self.state.terminated {
+      Ok(Some(OnlineAveraged::new(0.0)))
+    } else {
+      Ok(Some(OnlineAveraged::new(1.0)))
     }
   }
 }

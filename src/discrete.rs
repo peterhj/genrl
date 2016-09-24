@@ -182,42 +182,42 @@ impl BitVec64 {
 }
 
 #[derive(Clone)]
-pub struct BHeap<T> {
+pub struct BinaryHeap<T> {
   data:         Vec<T>,
-  leaf_cap:     usize,
-  depth_lim:    usize,
-  level_lims:   Vec<usize>,
   leaf_idx:     usize,
+  leaf_len:     usize,
+  leaf_cap:     usize,
+  depth_limit:  usize,
+  level_limits: Vec<usize>,
 }
 
 // XXX(20151112): Using 1-based binary heap array indexing convention:
 // <http://www.cse.hut.fi/en/research/SVG/TRAKLA2/tutorials/heap_tutorial/taulukkona.html>
 // <https://www.cs.cmu.edu/~adamchik/15-121/lectures/Binary%20Heaps/heaps.html>
 
-impl<T> BHeap<T> {
-  pub fn with_capacity(leaf_len: usize, init: T) -> BHeap<T> where T: Copy {
+impl<T> BinaryHeap<T> {
+  pub fn new(leaf_len: usize, init: T) -> BinaryHeap<T> where T: Copy {
     let leaf_cap = ceil_power2(leaf_len as u64) as usize;
-    let depth_lim = 1 + log2_slow(leaf_cap as u64) as usize;
-    //println!("{} {} {}", leaf_len, leaf_cap, depth_lim);
-    let total_sz = 2 * leaf_cap;
-    let data: Vec<_> = repeat(init).take(total_sz).collect();
-    let mut level_lims = Vec::with_capacity(depth_lim);
-    for _ in 0 .. depth_lim {
-      level_lims.push(0);
+    let depth_limit = 1 + log2_slow(leaf_cap as u64) as usize;
+    let mut level_limits = Vec::with_capacity(depth_limit);
+    for _ in 0 .. depth_limit {
+      level_limits.push(0);
     }
     let mut level_offset = leaf_cap;
-    level_lims[depth_lim-1] = level_offset + leaf_len;
-    for d in (0 .. depth_lim-1).rev() {
-      //println!("DEBUG: {}/{}", d, depth_lim);
+    level_limits[depth_limit-1] = level_offset + leaf_len;
+    for d in (0 .. depth_limit-1).rev() {
       level_offset /= 2;
-      level_lims[d] = level_offset + (level_lims[d+1] + 1) / 2;
+      level_limits[d] = level_offset + (level_limits[d+1] + 1) / 2;
     }
-    BHeap{
+    let heap_sz = 2 * leaf_cap;
+    let data: Vec<_> = repeat(init).take(heap_sz).collect();
+    BinaryHeap{
       data:         data,
-      leaf_cap:     leaf_cap,
-      depth_lim:    depth_lim,
-      level_lims:   level_lims,
       leaf_idx:     leaf_cap,
+      leaf_len:     leaf_len,
+      leaf_cap:     leaf_cap,
+      depth_limit:  depth_limit,
+      level_limits: level_limits,
     }
   }
 
@@ -248,7 +248,7 @@ impl<T> BHeap<T> {
   }
 
   #[inline]
-  pub fn level(&self, depth: usize) -> usize {
+  pub fn level_offset(&self, depth: usize) -> usize {
     1 << depth
   }
 }
@@ -256,20 +256,19 @@ impl<T> BHeap<T> {
 #[derive(Clone)]
 pub struct DiscreteDist32 {
   len:      usize,
-  heap:     BHeap<f32>,
   zeros:    BitVec64,
-  //range:    Range<f32>,
+  heap:     BinaryHeap<f32>,
 }
 
 impl DiscreteDist32 {
   pub fn new(len: usize) -> DiscreteDist32 {
-    let heap = BHeap::with_capacity(len, 0.0);
-    let heap_len = heap.data.len();
+    let heap_sz = 2 * ceil_power2(len as u64) as usize;
+    let zeros = BitVec64::with_capacity(heap_sz);
+    let heap = BinaryHeap::new(len, 0.0);
     DiscreteDist32{
       len:      len,
+      zeros:    zeros,
       heap:     heap,
-      zeros:    BitVec64::with_capacity(heap_len),
-      //range:    Range::new(0.0, 1.0),
     }
   }
 
@@ -280,25 +279,43 @@ impl DiscreteDist32 {
   pub fn reset(&mut self, weights: &[f32]) {
     assert_eq!(self.len, weights.len());
     self.zeros.clear();
-    self.heap.data[self.heap.leaf_idx .. self.heap.leaf_idx + self.len]
-      .copy_from_slice(&weights);
+    /*self.heap.data[self.heap.leaf_idx .. self.heap.leaf_idx + self.len]
+      .copy_from_slice(&weights);*/
+    for j in 0 .. self.len {
+      let idx = self.heap.leaf_idx + j;
+      let w = weights[j];
+      assert!(w >= 0.0);
+      if w == 0.0 {
+        self.zeros.set(idx, true);
+      }
+      self.heap.data[idx] = w;
+    }
     for j in self.len .. self.heap.leaf_cap {
       let idx = self.heap.leaf_idx + j;
+      self.zeros.set(idx, true);
       self.heap.data[idx] = 0.0;
     }
     for idx in (self.heap.root() .. self.heap.leaf_idx).rev() {
       let left_idx = self.heap.left(idx);
       let right_idx = self.heap.right(idx);
       self.heap.data[idx] = self.heap.data[left_idx] + self.heap.data[right_idx];
-      self.zeros.set(idx, true);
     }
   }
 
   pub fn zero(&mut self, j: usize) {
     assert!(j < self.len);
-    let idx = self.heap.leaf_idx + j;
-    self.heap.data[idx] = 0.0;
+    let mut idx = self.heap.leaf_idx + j;
     self.zeros.set(idx, true);
+    self.heap.data[idx] = 0.0;
+    while idx > self.heap.root() {
+      let prev_idx = idx;
+      let sib_idx = self.heap.sibling(prev_idx);
+      idx = self.heap.parent(prev_idx);
+      if self.zeros.get(prev_idx) && self.zeros.get(sib_idx) {
+        self.zeros.set(idx, true);
+      }
+      self.heap.data[idx] = self.heap.data[prev_idx] + self.heap.data[sib_idx];
+    }
   }
 
   pub fn sample<R>(&mut self, rng: &mut R) -> Option<usize> where R: Rng {
@@ -311,209 +328,33 @@ impl DiscreteDist32 {
         }
         while idx > self.heap.root() {
           let prev_idx = idx;
-          idx = self.heap.parent(idx);
-          if self.zeros.get(prev_idx) && self.zeros.get(self.heap.sibling(prev_idx)) {
+          let sib_idx = self.heap.sibling(prev_idx);
+          idx = self.heap.parent(prev_idx);
+          if self.zeros.get(prev_idx) && self.zeros.get(sib_idx) {
             self.zeros.set(idx, true);
           }
         }
+        idx = self.heap.root();
         depth = 0;
       }
       depth += 1;
       let left_idx = self.heap.left(idx);
       let right_idx = self.heap.right(idx);
-      if right_idx >= self.heap.level_lims[depth] {
+      if right_idx >= self.heap.level_limits[depth] || self.zeros.get(right_idx) {
         idx = left_idx;
         continue;
       }
       let value = self.heap.data[idx];
       let left_value = self.heap.data[left_idx];
-      //let u = value * self.range.ind_sample(rng);
       let u = rng.gen_range(0.0, value);
-      if u >= left_value && !self.zeros.get(right_idx) {
-        idx = right_idx;
-      } else {
+      if u < left_value {
         idx = left_idx;
+      } else {
+        idx = right_idx;
       }
     }
-    Some(idx - self.heap.leaf_idx)
-  }
-}
-
-#[derive(Clone)]
-pub struct DiscreteSampler {
-  max_n:    usize,
-  leaf_idx: usize,
-  n:        usize,
-  heap:     BHeap<f32>,
-  marks:    BitVec32,
-  zeros:    BitVec32,
-}
-
-impl DiscreteSampler {
-  pub fn with_capacity(max_n: usize) -> DiscreteSampler {
-    let heap = BHeap::with_capacity(max_n, 0.0);
-    //let half_cap = ceil_power2(n as u64) as usize - 1;
-    //let cap = 2 * ceil_power2(n as u64) as usize - 1;
-    let half_cap = ceil_power2(max_n as u64) as usize;
-    let cap = 2 * ceil_power2(max_n as u64) as usize;
-    let marks = BitVec32::with_capacity(2 * half_cap);
-    let zeros = BitVec32::with_capacity(cap - half_cap);
-    DiscreteSampler{
-      max_n:    max_n,
-      leaf_idx: half_cap,
-      n:        0,
-      heap:     heap,
-      marks:    marks,
-      zeros:    zeros,
-    }
-  }
-
-  #[inline]
-  fn mark_idx(&self, idx: usize) -> usize {
-    //2 * self.heap.parent(idx) + 1 - (idx % 2)
-    2 * self.heap.parent(idx) + (idx % 2)
-  }
-
-  #[inline]
-  fn mark_sibling_idx(&self, idx: usize) -> usize {
-    //2 * self.heap.parent(idx) + (idx % 2)
-    2 * self.heap.parent(idx) + 1 - (idx % 2)
-  }
-
-  #[inline]
-  fn mark_left_idx(&self, parent_idx: usize) -> usize {
-    2 * parent_idx
-  }
-
-  #[inline]
-  fn mark_right_idx(&self, parent_idx: usize) -> usize {
-    2 * parent_idx + 1
-  }
-
-  pub fn capacity(&self) -> usize {
-    self.max_n
-  }
-
-  pub fn unsafe_reset(&mut self) {
-    self.n = self.max_n;
-  }
-
-  pub fn get_mut_parts(&mut self) -> (&mut [f32], &mut [u32], &mut [u32]) {
-    (&mut self.heap.data, &mut self.marks.data, &mut self.zeros.data)
-  }
-
-  pub fn reset(&mut self, xs: &[f32]) {
-    assert_eq!(self.max_n, xs.len());
-    self.n = self.max_n;
-    self.marks.clear();
-    self.zeros.clear();
-
-    (&mut self.heap.data[self.leaf_idx .. self.leaf_idx + self.n]).clone_from_slice(xs);
-
-    // XXX: Remaining part of heap data should always be zeroed.
-    for idx in self.leaf_idx + self.n .. self.heap.data.len() {
-      let mark_idx = self.mark_idx(idx);
-      self.marks.set(mark_idx, true);
-      self.zeros.set(idx - self.leaf_idx, true);
-    }
-    for idx in (self.heap.root() .. self.leaf_idx).rev() {
-      let left_idx = self.heap.left(idx);
-      let right_idx = self.heap.right(idx);
-      self.heap.data[idx] = self.heap.data[left_idx] + self.heap.data[right_idx];
-      if self.marks.get(self.mark_left_idx(idx)).unwrap() && self.marks.get(self.mark_right_idx(idx)).unwrap() {
-        if idx > 0 {
-          let mark_idx = self.mark_idx(idx);
-          self.marks.set(mark_idx, true);
-        }
-      }
-    }
-  }
-
-  pub fn zero(&mut self, j: usize) {
-    if self.zeros.get(j).unwrap() {
-      return;
-    }
-    self.n -= 1;
-    self.zeros.set(j, true);
-    if self.n == 0 {
-      return;
-    }
-
-    let root = self.heap.root();
-    let mut idx = self.leaf_idx + j;
-    let mut do_mark = true;
-    self.heap.data[idx] = 0.0;
-    loop {
-      if idx == root {
-        break;
-      }
-      let parent_idx = self.heap.parent(idx);
-      // XXX: Note: subtracting the zeroed out value, instead of recomputing the
-      // sum, leads to roundoff errors which seriously mess up the sampling part
-      // of the data structure.
-      self.heap.data[parent_idx] = self.heap.data[idx] + self.heap.data[self.heap.sibling(idx)];
-      if do_mark {
-        let mark_idx = self.mark_idx(idx);
-        let mark_sib_idx = self.mark_sibling_idx(idx);
-        self.marks.set(mark_idx, true);
-        if !self.marks.get(mark_sib_idx).unwrap() {
-          do_mark = false;
-        }
-      }
-      idx = parent_idx;
-    }
-  }
-
-  pub fn sample<R: Rng>(&mut self, rng: &mut R) -> Option<usize> {
-    if self.n == 0 {
-      return None;
-    }
-    let mut idx = self.heap.root();
-    loop {
-      if idx >= self.leaf_idx {
-        break;
-      }
-      let left_idx = self.heap.left(idx);
-      let right_idx = self.heap.right(idx);
-      match (self.marks.get(self.mark_left_idx(idx)).unwrap(), self.marks.get(self.mark_right_idx(idx)).unwrap()) {
-        (false, false) => {
-          let value = self.heap.data[idx];
-          //assert!(value > 0.0); // XXX: Range already checks this.
-          //println!("DEBUG: gen_range value: {}", value);
-          if !(value > 0.0) {
-            fn bfs_zero(filter: &mut DiscreteSampler, idx: usize) {
-              let leaf_idx = filter.leaf_idx;
-              if idx >= leaf_idx {
-                filter.zero(idx - leaf_idx);
-              } else {
-                let left_idx = filter.heap.left(idx);
-                let right_idx = filter.heap.right(idx);
-                bfs_zero(filter, left_idx);
-                bfs_zero(filter, right_idx);
-              }
-            };
-            bfs_zero(self, idx);
-            return self.sample(rng);
-          }
-          let left_value = self.heap.data[left_idx];
-          let u = rng.gen_range(0.0, value);
-          if u < left_value {
-            idx = left_idx;
-          } else {
-            idx = right_idx;
-          }
-        }
-        (false, true) => {
-          idx = left_idx;
-        }
-        (true, false) => {
-          idx = right_idx;
-        }
-        _ => {
-          unreachable!();
-        }
-      }
-    }
-    Some(idx - self.leaf_idx)
+    let j = idx - self.heap.leaf_idx;
+    assert!(j < self.len);
+    Some(j)
   }
 }
