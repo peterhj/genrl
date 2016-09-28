@@ -121,7 +121,7 @@ impl Response for Discounted<f32> {
 
   #[inline]
   fn as_scalar(&self) -> f32 {
-    self.value
+    self.value * (1.0 - self.discount)
   }
 }
 
