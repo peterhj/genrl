@@ -26,7 +26,7 @@ fn main() {
   op_cfg.push(SeqOperatorConfig::SimpleInput(SimpleInputOperatorConfig{
     batch_sz:   batch_sz,
     stride:     4,
-    scale:      None,
+    preprocs:   vec![],
   }));
   op_cfg.push(SeqOperatorConfig::Affine(AffineOperatorConfig{
     batch_sz:   batch_sz,
@@ -66,7 +66,7 @@ fn main() {
   let pg_cfg = PolicyGradConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
-    step_size:      0.1,
+    step_size:      1.0,
     max_horizon:    horizon,
     baseline:       0.0,
   };

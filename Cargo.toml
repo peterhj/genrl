@@ -7,9 +7,9 @@ authors = ["Peter Jin <peterhaijin@gmail.com>"]
 name = "genrl"
 path = "src/lib.rs"
 
-[[bin]]
-name = "train-cartpole"
-path = "examples/train-cartpole.rs"
+#[[bin]]
+#name = "train-cartpole"
+#path = "examples/train-cartpole.rs"
 
 [dependencies]
 bit-set = "*"

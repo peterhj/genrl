@@ -13,7 +13,7 @@ use std::cmp::{min};
 use std::marker::{PhantomData};
 use std::rc::{Rc};
 
-pub struct EpisodeSample<E> where E: Env {
+/*pub struct EpisodeSample<E> where E: Env {
   env:      Rc<RefCell<E>>,
   act_idx:  Option<u32>,
   suffix:   Option<E::Response>,
@@ -72,7 +72,7 @@ impl<E> SampleWeight for EpisodeSample<E> where E: Env {
   fn mix_weight(&mut self, w: f32) {
     self.weight = Some(self.weight.unwrap_or(1.0) * w);
   }
-}
+}*/
 
 pub struct EpisodeStepSample<E> where E: Env {
   pub env:      Rc<RefCell<E>>,
@@ -143,6 +143,58 @@ where E: Env + EnvRepr<f32>,
   _marker:  PhantomData<(E, T, S)>,
 }*/
 
+pub struct BasePgWorker<E, Op> where E: Env {
+  horizon:  usize,
+  cache:    Vec<EpisodeStepSample<E>>,
+  operator: Op,
+  act_dist: DiscreteDist32,
+}
+
+impl<E, Op> BasePgWorker<E, Op>
+where E: Env + EnvRepr<f32> + Clone,
+      E::Action: DiscreteAction,
+      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+{
+  pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
+    let action_dim = <E::Action as Action>::dim();
+    for episode in episodes {
+      episode.reset(init_cfg, rng);
+      for k in episode.steps.len() .. self.horizon {
+        if episode.terminated() {
+          break;
+        }
+        let prev_env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        //let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
+        let mut next_env: E = prev_env.borrow().clone();
+        let sample = EpisodeStepSample::new(prev_env, None, None);
+        self.cache.clear();
+        self.cache.push(sample);
+
+        self.operator.load_data(&self.cache);
+        self.operator.forward(OpPhase::Inference);
+
+        let output = self.operator.get_output();
+        self.act_dist.reset(&output.borrow()[ .. action_dim]);
+        let act_idx = self.act_dist.sample(rng).unwrap();
+        let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
+        if let Ok(res) = next_env.step(&action) {
+          episode.steps.push(EpisodeStep{
+            action:   action,
+            res:      res,
+            next_env: Rc::new(RefCell::new(next_env)),
+          });
+        } else {
+          panic!();
+        }
+      }
+      episode.fill_suffixes();
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PolicyGradConfig {
   pub batch_sz:     usize,
@@ -153,7 +205,7 @@ pub struct PolicyGradConfig {
 }
 
 pub struct PolicyGradWorker<E, Op>
-where E: Env + EnvRepr<f32> + EnvConvert<E>,
+where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {
@@ -168,7 +220,7 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
 }
 
 impl<E, Op> PolicyGradWorker<E, Op>
-where E: Env + EnvRepr<f32> + EnvConvert<E>,
+where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {
@@ -198,7 +250,8 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
+        //let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
+        let mut next_env: E = prev_env.borrow().clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
         self.cache.clear();
         self.cache.push(sample);
@@ -232,7 +285,7 @@ where E: Env + EnvRepr<f32> + EnvConvert<E>,
 }
 
 impl<E, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Op>
-where E: Env + EnvRepr<f32> + EnvConvert<E>,
+where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {

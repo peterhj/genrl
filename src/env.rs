@@ -161,7 +161,7 @@ pub trait EnvOpaqueRepr<Obs>: Env {
 }
 
 pub trait EnvRepr<T>: Env {
-  fn observable_len(&self) -> usize;
+  fn observable_len(&mut self) -> usize;
   fn extract_observable(&mut self, obs: &mut [T]);
 }
 
