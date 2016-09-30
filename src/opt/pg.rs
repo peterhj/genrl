@@ -167,7 +167,6 @@ where E: Env + EnvRepr<f32> + Clone,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        //let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
         let mut next_env: E = prev_env.borrow().clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
         self.cache.clear();
@@ -211,12 +210,10 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 {
   //policy:   DiffPolicy<E, T, S, Op>,
   cfg:      PolicyGradConfig,
-  pub operator: Op,
+  operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
   grad_acc: Vec<f32>,
-  //act_dist: DiscreteSampler,
   act_dist: DiscreteDist32,
-  //episodes: Vec<EpisodeSample<E>>,
 }
 
 impl<E, Op> PolicyGradWorker<E, Op>
@@ -233,7 +230,6 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
       grad_acc: grad_acc,
-      //act_dist: DiscreteSampler::with_capacity(<E::Action as Action>::dim()),
       act_dist: DiscreteDist32::new(<E::Action as Action>::dim()),
     }
   }
@@ -250,14 +246,13 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        //let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
         let mut next_env: E = prev_env.borrow().clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
         self.cache.clear();
         self.cache.push(sample);
 
         self.operator.load_data(&self.cache);
-        self.operator.forward(OpPhase::Inference);
+        self.operator.forward(OpPhase::Learning);
 
         let output = self.operator.get_output();
         self.act_dist.reset(&output.borrow()[ .. action_dim]);
@@ -274,12 +269,6 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
         }
       }
       episode.fill_suffixes();
-      /*let horizon = episode.steps.len()-1;
-      println!("DEBUG: sample: suffix[0]: {} {:?} {:?}",
-          horizon,
-          episode.suffixes[0],
-          episode.suffixes[horizon],
-      );*/
     }
   }
 }

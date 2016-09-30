@@ -113,6 +113,15 @@ pub struct Discounted<T> where T: Copy {
   pub discount: T,
 }
 
+impl<T> Discounted<T> where T: Copy {
+  pub fn new(value: T, discount: T) -> Discounted<T> {
+    Discounted{
+      value:    value,
+      discount: discount,
+    }
+  }
+}
+
 impl Response for Discounted<f32> {
   #[inline]
   fn lreduce(&mut self, prefix: Discounted<f32>) {
@@ -122,6 +131,37 @@ impl Response for Discounted<f32> {
   #[inline]
   fn as_scalar(&self) -> f32 {
     self.value * (1.0 - self.discount)
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NormalizeDiscounted<T> where T: Copy {
+  pub value:    T,
+  pub discount: T,
+  pub count:    usize,
+}
+
+impl<T> NormalizeDiscounted<T> where T: Copy {
+  pub fn new(value: T, discount: T) -> NormalizeDiscounted<T> {
+    NormalizeDiscounted{
+      value:    value,
+      discount: discount,
+      count:    1,
+    }
+  }
+}
+
+impl Response for NormalizeDiscounted<f32> {
+  #[inline]
+  fn lreduce(&mut self, prefix: NormalizeDiscounted<f32>) {
+    assert_eq!(1, prefix.count);
+    self.value = prefix.value + prefix.discount * self.value;
+    self.count += 1;
+  }
+
+  #[inline]
+  fn as_scalar(&self) -> f32 {
+    self.value * (1.0 - self.discount) / (1.0 - self.discount.powi(self.count as i32))
   }
 }
 

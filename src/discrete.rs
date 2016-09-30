@@ -40,7 +40,7 @@ pub fn log2_slow(x: u64) -> u64 {
   const s: [u64; 6] = [1, 2, 4, 8, 16, 32];
   let mut v = x;
   let mut r = 0;
-  for i in (0 .. 5).rev() {
+  for i in (0 .. 6).rev() {
     if v & b[i] != 0 {
       v >>= s[i];
       r |= s[i];
@@ -148,13 +148,6 @@ impl BitVec64 {
   }
 
   pub fn get(&self, idx: usize) -> bool {
-    /*//assert!(idx < self.length);
-    if idx < self.length {
-      let (word_idx, bit_idx) = (idx / 64, idx % 64);
-      Some(0x0 != (0x1 & (self.data[word_idx] >> bit_idx)))
-    } else {
-      None
-    }*/
     let (word_idx, bit_idx) = (idx / 64, idx % 64);
     0x0 != (0x1 & (self.data[word_idx] >> bit_idx))
   }
