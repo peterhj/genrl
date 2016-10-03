@@ -56,9 +56,8 @@ fn main() {
     act_kind:   ActivationKind::Identity,
     w_init:     ParamInitKind::Kaiming,
   }));*/
-  op_cfg.push(SeqOperatorConfig::SoftmaxNLLClassLoss(ClassLossOperatorConfig{
+  op_cfg.push(SeqOperatorConfig::SoftmaxNLLClassLoss(ClassLossConfig{
     batch_sz:       batch_sz,
-    minibatch_sz:   minibatch_sz,
     num_classes:    2,
   }));
   let op = SeqOperator::new(op_cfg, OpCapability::Backward);

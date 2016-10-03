@@ -14,7 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 bit-set = "*"
 rand = "*"
-neuralops = { path = "../neuralops" }
+#neuralops = { path = "../neuralops" }
 operator = { path = "../liboperator" }
 rng = { path = "../librng" }
 sharedmem = { path = "../libsharedmem" }
