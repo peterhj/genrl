@@ -153,7 +153,8 @@ pub struct BasePgWorker<E, Op> where E: Env {
 impl<E, Op> BasePgWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
@@ -206,7 +207,8 @@ pub struct PolicyGradConfig {
 pub struct PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   //policy:   DiffPolicy<E, T, S, Op>,
   cfg:      PolicyGradConfig,
@@ -222,7 +224,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {
   pub fn new(cfg: PolicyGradConfig, op: Op) -> PolicyGradWorker<E, Op> {
-    let param_sz = op.param_len();
+    let param_sz = op.diff_param_sz();
     let mut grad_acc = Vec::with_capacity(param_sz);
     unsafe { grad_acc.set_len(param_sz) };
     PolicyGradWorker{

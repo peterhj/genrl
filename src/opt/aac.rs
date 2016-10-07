@@ -41,7 +41,7 @@ where E: Env + EnvRepr<f32> + Clone,
       Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
 {
   pub fn new(cfg: SgdAacConfig, op: Op) -> SgdAacWorker<E, Op> {
-    let param_sz = op.param_len();
+    let param_sz = op.diff_param_sz();
     let mut grad_acc = Vec::with_capacity(param_sz);
     unsafe { grad_acc.set_len(param_sz) };
     SgdAacWorker{
