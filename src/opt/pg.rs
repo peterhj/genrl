@@ -1,5 +1,5 @@
 use discrete::{DiscreteDist32};
-use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Episode, EpisodeStep};
+use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Value, Episode, EpisodeStep};
 
 use operator::prelude::*;
 use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
@@ -68,34 +68,14 @@ impl<E> SampleLossWeight<ClassLoss> for EpisodeStepSample<E> where E: Env {
   }
 }
 
-/*pub trait DiscretePolicy {
-  type Env;
-
-  fn eval(&mut self, env: &mut Self::Env, action_dist: &mut [f32]);
-}
-
-pub struct DiscretePolicyGrad<E, P> where E: Env, P: DiscretePolicy<Env=E> {
-  _marker: PhantomData<(E, P)>,
-}
-
-impl<E, P> DiscretePolicyGrad<E, P> where E: Env, P: DiscretePolicy<Env=E> {
-}*/
-
-/*pub trait DiffPolicyOutput {
-  fn action_probabilities(&self) -> &[f32];
-}*/
-
-/*pub struct DiffPolicy<E, T, S, Op>
-where E: Env + EnvRepr<f32>,
-      //Out: DiffPolicyOutput,
-      Op: Operator<T, S> + DiffOperatorOutput<T, f32>,
-{
-  _marker:  PhantomData<(E, T, S)>,
-}*/
-
 pub struct BasePgWorker<E, PolicyOp> where E: Env {
+  batch_sz:     usize,
+  minibatch_sz: usize,
   max_horizon:  usize,
   act_dist:     DiscreteDist32,
+  episodes:     Vec<Episode<E>>,
+  step_values:  Vec<Vec<f32>>,
+  final_values: Vec<Option<f32>>,
   _marker:      PhantomData<(E, PolicyOp)>,
 }
 
@@ -104,11 +84,107 @@ where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
       PolicyOp: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  pub fn new(batch_sz: usize, max_horizon: usize) -> BasePgWorker<E, PolicyOp> {
+  pub fn new(minibatch_sz: usize, max_horizon: usize) -> BasePgWorker<E, PolicyOp> {
+    let mut episodes = Vec::with_capacity(minibatch_sz);
+    for _ in 0 .. minibatch_sz {
+      episodes.push(Episode::new());
+    }
+    let mut step_values = Vec::with_capacity(minibatch_sz);
+    for _ in 0 .. minibatch_sz {
+      step_values.push(vec![]);
+    }
+    let mut final_values = Vec::with_capacity(minibatch_sz);
+    final_values.resize(minibatch_sz, None);
     BasePgWorker{
+      batch_sz:     1,
+      minibatch_sz: minibatch_sz,
       max_horizon:  max_horizon,
       act_dist:     DiscreteDist32::new(<E::Action as Action>::dim()),
+      episodes:     episodes,
+      step_values:  step_values,
+      final_values: final_values,
       _marker:      PhantomData,
+    }
+  }
+
+  pub fn reset_episodes<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng {
+    for episode in self.episodes.iter_mut() {
+      episode.reset(init_cfg, rng);
+    }
+  }
+
+  pub fn sample_steps<V, R>(&mut self, max_num_steps: Option<usize>, value_cfg: V::Cfg, policy: &mut PolicyOp, /*value: Option<&mut ValueOp>,*/ cache: &mut Vec<EpisodeStepSample<E>>, init_cfg: &E::Init, rng: &mut R) where V: Value<Res=E::Response>, R: Rng {
+    let action_dim = <E::Action as Action>::dim();
+    for episode in self.episodes.iter_mut() {
+      if episode.terminated() || episode.horizon() >= self.max_horizon {
+        episode.reset(init_cfg, rng);
+      }
+    }
+    for (idx, episode) in self.episodes.iter_mut().enumerate() {
+      let init_horizon = episode.horizon();
+      let horizon_limit = if let Some(max_num_steps) = max_num_steps {
+        min(init_horizon + max_num_steps, self.max_horizon)
+      } else {
+        self.max_horizon
+      };
+      for k in init_horizon .. horizon_limit {
+        if episode.terminated() {
+          break;
+        }
+        let prev_env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        let mut next_env: E = prev_env.borrow().clone();
+        let sample = EpisodeStepSample::new(prev_env, None, None);
+        cache.clear();
+        cache.push(sample);
+        policy.load_data(&cache);
+        policy.forward(OpPhase::Learning);
+        let output = policy.get_output();
+        // FIXME(20161009): sometimes the policy output contains NaNs because
+        // all probabilities were zero, should gracefully handle this case.
+        self.act_dist.reset(&output.borrow()[ .. action_dim]);
+        let act_idx = self.act_dist.sample(rng).unwrap();
+        let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
+        if let Ok(res) = next_env.step(&action) {
+          episode.steps.push(EpisodeStep{
+            action:   action,
+            res:      res,
+            next_env: Rc::new(RefCell::new(next_env)),
+          });
+        } else {
+          panic!();
+        }
+      }
+      if !episode.terminated() {
+        if false /*let Some(ref mut value_op) = value*/ {
+          let impute_val = 0.0; // FIXME: get from the value op.
+          self.final_values[idx] = Some(impute_val);
+        } else {
+          self.final_values[idx] = None;
+        }
+      } else {
+        self.final_values[idx] = None;
+      }
+      let mut suffix_val = if let Some(final_val) = self.final_values[idx] {
+        Some(<V as Value>::from_scalar(final_val, value_cfg))
+      } else {
+        None
+      };
+      self.step_values[idx].resize(episode.horizon(), 0.0);
+      for k in (init_horizon .. episode.horizon()).rev() {
+        if let Some(res) = episode.steps[k].res {
+          if let Some(ref mut suffix_val) = suffix_val {
+            suffix_val.lreduce(res);
+          } else {
+            suffix_val = Some(<V as Value>::from_res(res, value_cfg));
+          }
+        }
+        if let Some(suffix_val) = suffix_val {
+          self.step_values[idx][k] = suffix_val.to_scalar();
+        }
+      }
     }
   }
 
@@ -128,10 +204,8 @@ where E: Env + EnvRepr<f32> + Clone,
         let sample = EpisodeStepSample::new(prev_env, None, None);
         cache.clear();
         cache.push(sample);
-
         policy.load_data(&cache);
         policy.forward(OpPhase::Learning);
-
         let output = policy.get_output();
         self.act_dist.reset(&output.borrow()[ .. action_dim]);
         let act_idx = self.act_dist.sample(rng).unwrap();
@@ -149,7 +223,7 @@ where E: Env + EnvRepr<f32> + Clone,
       if !episode.terminated() {
         // FIXME(20161008): bootstrap with the value of the last state.
       }
-      episode.fill_suffixes();
+      episode._fill_suffixes();
     }
   }
 }
@@ -168,7 +242,6 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
       Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  //policy:   DiffPolicy<E, T, S, Op>,
   cfg:      PolicyGradConfig,
   operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
@@ -189,56 +262,19 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       cfg:      cfg,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
-      base_pg:  BasePgWorker::new(cfg.batch_sz, cfg.max_horizon),
+      base_pg:  BasePgWorker::new(cfg.minibatch_sz, cfg.max_horizon),
       grad_acc: grad_acc,
     }
   }
 
   pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
     self.base_pg.sample(&mut self.operator, &mut self.cache, episodes, init_cfg, rng);
-    /*let action_dim = <E::Action as Action>::dim();
-    for episode in episodes {
-      episode.reset(init_cfg, rng);
-      for k in episode.steps.len() .. self.cfg.max_horizon {
-        if episode.terminated() {
-          break;
-        }
-        let prev_env = match k {
-          0 => episode.init_env.clone(),
-          k => episode.steps[k-1].next_env.clone(),
-        };
-        let mut next_env: E = prev_env.borrow().clone();
-        let sample = EpisodeStepSample::new(prev_env, None, None);
-        self.cache.clear();
-        self.cache.push(sample);
-
-        self.operator.load_data(&self.cache);
-        self.operator.forward(OpPhase::Learning);
-
-        let output = self.operator.get_output();
-        self.act_dist.reset(&output.borrow()[ .. action_dim]);
-        let act_idx = self.act_dist.sample(rng).unwrap();
-        let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
-        if let Ok(res) = next_env.step(&action) {
-          episode.steps.push(EpisodeStep{
-            action:   action,
-            res:      res,
-            next_env: Rc::new(RefCell::new(next_env)),
-          });
-        } else {
-          panic!();
-        }
-      }
-      episode.fill_suffixes();
-    }*/
   }
 }
 
 impl<E, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
-      //Op: DiffOperator<f32, RwSlice<f32>> + DiffOperatorInput<f32, EpisodeStepSample<E>>,
       Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   type Rng = Op::Rng;

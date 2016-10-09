@@ -134,6 +134,49 @@ impl Response for Discounted<f32> {
   }
 }
 
+pub trait Value: Copy + Debug {
+  type Cfg: Copy;
+  type Res: Response;
+
+  fn from_res(res: Self::Res, cfg: Self::Cfg) -> Self where Self: Sized;
+  fn from_scalar(scalar_value: f32, cfg: Self::Cfg) -> Self where Self: Sized;
+  fn to_scalar(&self) -> f32;
+  fn lreduce(&mut self, prefix: Self::Res);
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiscountedValue<T> {
+  pub value:    T,
+  pub discount: T,
+}
+
+impl Value for DiscountedValue<f32> {
+  type Cfg = f32;
+  type Res = f32;
+
+  fn from_res(res: f32, cfg: f32) -> DiscountedValue<f32> {
+    DiscountedValue{
+      value:    res,
+      discount: cfg,
+    }
+  }
+
+  fn from_scalar(scalar_value: f32, cfg: f32) -> DiscountedValue<f32> {
+    DiscountedValue{
+      value:    scalar_value,
+      discount: cfg,
+    }
+  }
+
+  fn to_scalar(&self) -> f32 {
+    self.value * (1.0 - self.discount)
+  }
+
+  fn lreduce(&mut self, prefix: f32) {
+    self.value = prefix + self.discount * self.value;
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct NormalizeDiscounted<T> where T: Copy {
   pub value:    T,
@@ -238,7 +281,7 @@ pub struct Episode<E> where E: Env {
   pub init_env: Rc<RefCell<E>>,
   pub steps:    Vec<EpisodeStep<E>>,
   pub suffixes: Vec<Option<E::Response>>,
-  final_value:  Option<E::Response>,
+  //final_value:  Option<E::Response>,
 }
 
 impl<E> Clone for Episode<E> where E: Env {
@@ -247,7 +290,7 @@ impl<E> Clone for Episode<E> where E: Env {
       init_env: self.init_env.clone(),
       steps:    self.steps.clone(),
       suffixes: self.suffixes.clone(),
-      final_value:  self.final_value,
+      //final_value:  self.final_value,
     }
   }
 }
@@ -258,8 +301,12 @@ impl<E> Episode<E> where E: Env {
       init_env: Rc::new(RefCell::new(Default::default())),
       steps:    vec![],
       suffixes: vec![],
-      final_value:  None,
+      //final_value:  None,
     }
+  }
+
+  pub fn horizon(&self) -> usize {
+    self.steps.len()
   }
 
   pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng + Sized {
@@ -275,23 +322,24 @@ impl<E> Episode<E> where E: Env {
     }
   }
 
-  pub fn set_final_value(&mut self, v: E::Response) {
+  /*pub fn set_final_value(&mut self, v: E::Response) {
     self.final_value = Some(v);
-  }
+  }*/
 
-  pub fn fill_suffixes(&mut self) {
+  pub fn _fill_suffixes(&mut self) {
     let horizon = self.steps.len();
     self.suffixes.clear();
     for k in 0 .. horizon {
       self.suffixes.push(self.steps[k].res);
     }
-    let mut suffix = if self.terminated() {
+    /*let mut suffix = if self.terminated() {
       None
     } else if let Some(v) = self.final_value {
       Some(v)
     } else {
       None
-    };
+    };*/
+    let mut suffix = None;
     for k in (0 .. horizon).rev() {
       if suffix.is_none() {
         suffix = self.steps[k].res;
@@ -302,7 +350,7 @@ impl<E> Episode<E> where E: Env {
     }
   }
 
-  pub fn value(&self) -> Option<f32> {
+  pub fn _value(&self) -> Option<f32> {
     if !self.suffixes.is_empty() {
       assert_eq!(self.steps.len(), self.suffixes.len());
       self.suffixes[0].map(|r| r.as_scalar())

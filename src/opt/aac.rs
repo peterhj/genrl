@@ -58,7 +58,7 @@ where E: Env + EnvRepr<f32> + Clone,
       policy:   policy,
       value:    value,
       cache:    Vec::with_capacity(cfg.batch_sz),
-      base_pg:  BasePgWorker::new(cfg.batch_sz, cfg.max_horizon),
+      base_pg:  BasePgWorker::new(cfg.minibatch_sz, cfg.max_horizon),
       pg_acc:   pg_acc,
       vg_acc:   vg_acc,
     }
