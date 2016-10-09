@@ -2,7 +2,7 @@ use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Episode, EpisodeStep};
 
 use operator::prelude::*;
-use operator::data::{SampleInput, SampleExtractInput, SampleClass, SampleWeight};
+//use operator::data::{SampleInput, SampleExtractInput, SampleClass, SampleWeight};
 use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
 use rng::xorshift::{Xorshiftplus128Rng};
 use sharedmem::{RwSlice};
@@ -96,25 +96,27 @@ impl<E> EpisodeStepSample<E> where E: Env {
   }
 }
 
-impl<E> SampleExtractInput<f32> for EpisodeStepSample<E> where E: Env + EnvRepr<f32> {
-  fn extract_input(&self, output: &mut [f32]) {
+impl<E> SampleDatum<[f32]> for EpisodeStepSample<E> where E: Env + EnvRepr<f32> {
+  fn extract_input(&self, output: &mut [f32]) -> Result<(), ()> {
     self.env.borrow_mut().extract_observable(output);
+    Ok(())
   }
 }
 
-impl<E> SampleClass for EpisodeStepSample<E> where E: Env {
+impl<E> SampleLabel for EpisodeStepSample<E> where E: Env {
   fn class(&self) -> Option<u32> {
     self.act_idx
   }
 }
 
-impl<E> SampleWeight for EpisodeStepSample<E> where E: Env {
+impl<E> SampleLossWeight<ClassLoss> for EpisodeStepSample<E> where E: Env {
   fn weight(&self) -> Option<f32> {
     self.suffix_r.map(|x| x.as_scalar() * self.weight.unwrap_or(1.0))
   }
 
-  fn mix_weight(&mut self, w: f32) {
+  fn mix_weight(&mut self, w: f32) -> Result<(), ()> {
     self.weight = Some(self.weight.unwrap_or(1.0) * w);
+    Ok(())
   }
 }
 
@@ -221,7 +223,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 impl<E, Op> PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   pub fn new(cfg: PolicyGradConfig, op: Op) -> PolicyGradWorker<E, Op> {
     let param_sz = op.diff_param_sz();
@@ -278,7 +280,9 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 impl<E, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      //Op: DiffOperator<f32, RwSlice<f32>> + DiffOperatorInput<f32, EpisodeStepSample<E>>,
+      Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   type Rng = Op::Rng;
 
