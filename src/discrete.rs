@@ -277,6 +277,10 @@ impl DiscreteDist32 {
     for j in 0 .. self.len {
       let idx = self.heap.leaf_idx + j;
       let w = weights[j];
+      /*if !(w >= 0.0) {
+        panic!("WARNING: bad discrete dist weight: {:e}", w);
+      }*/
+      assert!(!w.is_nan());
       assert!(w >= 0.0);
       if w == 0.0 {
         self.zeros.set(idx, true);

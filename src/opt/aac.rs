@@ -1,9 +1,8 @@
 use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Episode, EpisodeStep};
-use opt::pg::{EpisodeStepSample};
+use opt::pg::{EpisodeStepSample, BasePgWorker};
 
 use operator::prelude::*;
-use operator::data::{SampleInput, SampleExtractInput, SampleClass, SampleWeight};
 use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
 use rng::xorshift::{Xorshiftplus128Rng};
 use sharedmem::{RwSlice};
@@ -19,89 +18,69 @@ pub struct SgdAacConfig {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
   pub max_horizon:  usize,
-  pub step_size:    f32,
+  pub p_step_size:  f32,
+  pub v_step_size:  f32,
   pub momentum:     f32,
 }
 
-pub struct SgdAacWorker<E, Op>
+pub struct SgdAacWorker<E, PolicyOp, ValueOp, R>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      R: Rng,
+      PolicyOp: DiffOperator<f32, Rng=R> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      ValueOp: DiffOperator<f32, Rng=R> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   cfg:      SgdAacConfig,
-  operator: Op,
+  policy:   PolicyOp,
+  value:    ValueOp,
   cache:    Vec<EpisodeStepSample<E>>,
-  grad_acc: Vec<f32>,
-  act_dist: DiscreteDist32,
+  base_pg:  BasePgWorker<E, PolicyOp>,
+  pg_acc:   Vec<f32>,
+  vg_acc:   Vec<f32>,
 }
 
-impl<E, Op> SgdAacWorker<E, Op>
+impl<E, PolicyOp, ValueOp, R> SgdAacWorker<E, PolicyOp, ValueOp, R>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      R: Rng,
+      PolicyOp: DiffOperator<f32, Rng=R> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      ValueOp: DiffOperator<f32, Rng=R> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  pub fn new(cfg: SgdAacConfig, op: Op) -> SgdAacWorker<E, Op> {
-    let param_sz = op.diff_param_sz();
-    let mut grad_acc = Vec::with_capacity(param_sz);
-    unsafe { grad_acc.set_len(param_sz) };
+  pub fn new(cfg: SgdAacConfig, /*op: Op,*/ policy: PolicyOp, value: ValueOp) -> SgdAacWorker<E, PolicyOp, ValueOp, R> {
+    let pg_sz = policy.diff_param_sz();
+    let mut pg_acc = Vec::with_capacity(pg_sz);
+    pg_acc.resize(pg_sz, 0.0);
+    let vg_sz = value.diff_param_sz();
+    let mut vg_acc = Vec::with_capacity(pg_sz);
+    vg_acc.resize(pg_sz, 0.0);
     SgdAacWorker{
       cfg:      cfg,
-      operator: op,
+      policy:   policy,
+      value:    value,
       cache:    Vec::with_capacity(cfg.batch_sz),
-      grad_acc: grad_acc,
-      act_dist: DiscreteDist32::new(<E::Action as Action>::dim()),
+      base_pg:  BasePgWorker::new(cfg.batch_sz, cfg.max_horizon),
+      pg_acc:   pg_acc,
+      vg_acc:   vg_acc,
     }
   }
 
-  pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
-    let action_dim = <E::Action as Action>::dim();
-    for episode in episodes {
-      episode.reset(init_cfg, rng);
-      for k in episode.steps.len() .. self.cfg.max_horizon {
-        if episode.terminated() {
-          break;
-        }
-        let prev_env = match k {
-          0 => episode.init_env.clone(),
-          k => episode.steps[k-1].next_env.clone(),
-        };
-        //let mut next_env: E = EnvConvert::from_env(&*prev_env.borrow());
-        let mut next_env: E = prev_env.borrow().clone();
-        let sample = EpisodeStepSample::new(prev_env, None, None);
-        self.cache.clear();
-        self.cache.push(sample);
-
-        self.operator.load_data(&self.cache);
-        self.operator.forward(OpPhase::Inference);
-
-        let output = self.operator.get_output();
-        self.act_dist.reset(&output.borrow()[ .. action_dim]);
-        let act_idx = self.act_dist.sample(rng).unwrap();
-        let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
-        if let Ok(res) = next_env.step(&action) {
-          episode.steps.push(EpisodeStep{
-            action:   action,
-            res:      res,
-            next_env: Rc::new(RefCell::new(next_env)),
-          });
-        } else {
-          panic!();
-        }
-      }
-      episode.fill_suffixes();
-    }
+  pub fn sample<R2>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R2) where R2: Rng {
+    self.base_pg.sample(&mut self.policy, &mut self.cache, episodes, init_cfg, rng);
   }
 }
 
-impl<E, Op> OptWorker<f32, Episode<E>> for SgdAacWorker<E, Op>
+impl<E, PolicyOp, ValueOp, R> OptWorker<f32, Episode<E>> for SgdAacWorker<E, PolicyOp, ValueOp, R>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
+      R: Rng,
+      PolicyOp: DiffOperator<f32, Rng=R> + DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      ValueOp: DiffOperator<f32, Rng=R> + DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  type Rng = Op::Rng;
+  type Rng = R;
 
   fn init_param(&mut self, rng: &mut Self::Rng) {
-    self.operator.init_param(rng);
+    self.policy.init_param(rng);
+    self.value.init_param(rng);
   }
 
   fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
@@ -109,8 +88,10 @@ where E: Env + EnvRepr<f32> + Clone,
   fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
 
   fn step(&mut self, episodes: &mut Iterator<Item=Episode<E>>) {
-    self.operator.reset_loss();
-    self.operator.reset_grad();
+    self.policy.reset_loss();
+    self.policy.reset_grad();
+    self.value.reset_loss();
+    self.value.reset_grad();
     self.cache.clear();
     for episode in episodes.take(self.cfg.minibatch_sz) {
       for k in 0 .. episode.steps.len() {
@@ -124,27 +105,45 @@ where E: Env + EnvRepr<f32> + Clone,
               Some(episode.steps[k].action.idx()),
               episode.suffixes[k]),
         };
-        assert!(sample.weight().is_some());
-        sample.init_weight(0.0); // FIXME: Q-baseline.
-        sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
+        assert!(sample.suffix_r.is_some());
         self.cache.push(sample);
         if self.cache.len() < self.cfg.batch_sz {
           continue;
         }
-        self.operator.load_data(&self.cache);
-        self.operator.forward(OpPhase::Learning);
-        self.operator.backward();
+        self.value.load_data(&self.cache);
+        self.value.forward(OpPhase::Learning);
+        self.value.backward();
+        let values = self.value.get_output();
+        for (idx, sample) in self.cache.iter_mut().enumerate() {
+          sample.set_baseline(values.borrow()[idx]);
+          sample.init_weight();
+          sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
+        }
+        self.policy.load_data(&self.cache);
+        self.policy.forward(OpPhase::Learning);
+        self.policy.backward();
         self.cache.clear();
       }
     }
     if !self.cache.is_empty() {
-      self.operator.load_data(&self.cache);
-      self.operator.forward(OpPhase::Learning);
-      self.operator.backward();
+      self.value.load_data(&self.cache);
+      self.value.forward(OpPhase::Learning);
+      self.value.backward();
+      let values = self.value.get_output();
+      for (idx, sample) in self.cache.iter_mut().enumerate() {
+        sample.set_baseline(values.borrow()[idx]);
+        sample.init_weight();
+        sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
+      }
+      self.policy.load_data(&self.cache);
+      self.policy.forward(OpPhase::Learning);
+      self.policy.backward();
       self.cache.clear();
     }
-    self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
-    self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
+    self.policy.accumulate_grad(-self.cfg.p_step_size, 0.0, &mut self.pg_acc, 0);
+    self.policy.update_param(1.0, 1.0, &mut self.pg_acc, 0);
+    self.value.accumulate_grad(-self.cfg.v_step_size, 0.0, &mut self.vg_acc, 0);
+    self.value.update_param(1.0, 1.0, &mut self.vg_acc, 0);
   }
 
   fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {
@@ -155,6 +154,7 @@ pub struct RmspropAacGradConfig {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
   pub max_horizon:  usize,
-  pub step_size:    f32,
+  pub p_step_size:  f32,
+  pub v_step_size:  f32,
   pub epsilon:      f32,
 }

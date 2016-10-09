@@ -2,7 +2,6 @@ use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Episode, EpisodeStep};
 
 use operator::prelude::*;
-//use operator::data::{SampleInput, SampleExtractInput, SampleClass, SampleWeight};
 use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
 use rng::xorshift::{Xorshiftplus128Rng};
 use sharedmem::{RwSlice};
@@ -13,71 +12,11 @@ use std::cmp::{min};
 use std::marker::{PhantomData};
 use std::rc::{Rc};
 
-/*pub struct EpisodeSample<E> where E: Env {
-  env:      Rc<RefCell<E>>,
-  act_idx:  Option<u32>,
-  suffix:   Option<E::Response>,
-  weight:   Option<f32>,
-}
-
-impl<E> EpisodeSample<E> where E: Env + EnvConvert<E> {
-  pub fn initial(init_env: Rc<RefCell<E>>) -> EpisodeSample<E> {
-    EpisodeSample{
-      env:      init_env,
-      act_idx:  None,
-      suffix:   None,
-      weight:   None,
-    }
-  }
-
-  pub fn new(env: Rc<RefCell<E>>, act_idx: u32, suffix: Option<E::Response>) -> EpisodeSample<E> {
-    EpisodeSample{
-      env:      env,
-      act_idx:  Some(act_idx),
-      suffix:   suffix,
-      weight:   None,
-    }
-  }
-
-  pub fn reset_initial(&mut self, init_env: Rc<RefCell<E>>) {
-    self.env.borrow_mut().clone_from_env(&*init_env.borrow());
-    self.act_idx = None;
-    self.suffix = None;
-    self.weight = None;
-  }
-
-  pub fn init_weight(&mut self, suffix: Option<E::Response>, constant_baseline: f32) {
-    self.suffix = suffix;
-    self.weight = Some(self.suffix.map(|r| r.as_scalar()).unwrap() - constant_baseline);
-  }
-}
-
-impl<E> SampleExtractInput<f32> for EpisodeSample<E> where E: Env + EnvRepr<f32> {
-  fn extract_input(&self, output: &mut [f32]) {
-    self.env.borrow_mut().extract_observable(output);
-  }
-}
-
-impl<E> SampleClass for EpisodeSample<E> where E: Env {
-  fn class(&self) -> Option<u32> {
-    self.act_idx
-  }
-}
-
-impl<E> SampleWeight for EpisodeSample<E> where E: Env {
-  fn weight(&self) -> Option<f32> {
-    self.suffix.map(|x| x.as_scalar() * self.weight.unwrap_or(1.0))
-  }
-
-  fn mix_weight(&mut self, w: f32) {
-    self.weight = Some(self.weight.unwrap_or(1.0) * w);
-  }
-}*/
-
 pub struct EpisodeStepSample<E> where E: Env {
   pub env:      Rc<RefCell<E>>,
   pub act_idx:  Option<u32>,
   pub suffix_r: Option<E::Response>,
+  pub baseline: Option<f32>,
   weight:       Option<f32>,
 }
 
@@ -87,12 +26,17 @@ impl<E> EpisodeStepSample<E> where E: Env {
       env:          env,
       act_idx:      act_idx,
       suffix_r:     suffix_r,
+      baseline:     None,
       weight:       None,
     }
   }
 
-  pub fn init_weight(&mut self, constant_baseline: f32) {
-    self.weight = Some(self.suffix_r.map(|r| r.as_scalar()).unwrap() - constant_baseline);
+  pub fn set_baseline(&mut self, baseline: f32) {
+    self.baseline = Some(baseline);
+  }
+
+  pub fn init_weight(&mut self) {
+    self.weight = Some(self.suffix_r.map(|r| r.as_scalar()).unwrap() - self.baseline.unwrap_or(0.0));
   }
 }
 
@@ -107,11 +51,15 @@ impl<E> SampleLabel for EpisodeStepSample<E> where E: Env {
   fn class(&self) -> Option<u32> {
     self.act_idx
   }
+
+  fn target(&self) -> Option<f32> {
+    self.suffix_r.map(|r| r.as_scalar())
+  }
 }
 
 impl<E> SampleLossWeight<ClassLoss> for EpisodeStepSample<E> where E: Env {
   fn weight(&self) -> Option<f32> {
-    self.suffix_r.map(|x| x.as_scalar() * self.weight.unwrap_or(1.0))
+    self.weight
   }
 
   fn mix_weight(&mut self, w: f32) -> Result<(), ()> {
@@ -146,23 +94,29 @@ where E: Env + EnvRepr<f32>,
 }*/
 
 pub struct BasePgWorker<E, Op> where E: Env {
-  horizon:  usize,
-  cache:    Vec<EpisodeStepSample<E>>,
-  operator: Op,
-  act_dist: DiscreteDist32,
+  max_horizon:  usize,
+  act_dist:     DiscreteDist32,
+  _marker:      PhantomData<(E, Op)>,
 }
 
 impl<E, Op> BasePgWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
       Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
+  pub fn new(batch_sz: usize, max_horizon: usize) -> BasePgWorker<E, Op> {
+    BasePgWorker{
+      max_horizon:  max_horizon,
+      act_dist:     DiscreteDist32::new(<E::Action as Action>::dim()),
+      _marker:      PhantomData,
+    }
+  }
+
+  pub fn sample<R>(&mut self, operator: &mut Op, cache: &mut Vec<EpisodeStepSample<E>>, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for episode in episodes {
       episode.reset(init_cfg, rng);
-      for k in episode.steps.len() .. self.horizon {
+      for k in episode.steps.len() .. self.max_horizon {
         if episode.terminated() {
           break;
         }
@@ -172,13 +126,13 @@ where E: Env + EnvRepr<f32> + Clone,
         };
         let mut next_env: E = prev_env.borrow().clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
-        self.cache.clear();
-        self.cache.push(sample);
+        cache.clear();
+        cache.push(sample);
 
-        self.operator.load_data(&self.cache);
-        self.operator.forward(OpPhase::Inference);
+        operator.load_data(&cache);
+        operator.forward(OpPhase::Inference);
 
-        let output = self.operator.get_output();
+        let output = operator.get_output();
         self.act_dist.reset(&output.borrow()[ .. action_dim]);
         let act_idx = self.act_dist.sample(rng).unwrap();
         let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
@@ -209,15 +163,14 @@ pub struct PolicyGradConfig {
 pub struct PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      //Op: DiffOperatorIo<f32, EpisodeStepSample<E>, RwSlice<f32>>,
       Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   //policy:   DiffPolicy<E, T, S, Op>,
   cfg:      PolicyGradConfig,
   operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
+  base_pg:  BasePgWorker<E, Op>,
   grad_acc: Vec<f32>,
-  act_dist: DiscreteDist32,
 }
 
 impl<E, Op> PolicyGradWorker<E, Op>
@@ -226,20 +179,21 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
   pub fn new(cfg: PolicyGradConfig, op: Op) -> PolicyGradWorker<E, Op> {
-    let param_sz = op.diff_param_sz();
-    let mut grad_acc = Vec::with_capacity(param_sz);
-    unsafe { grad_acc.set_len(param_sz) };
+    let grad_sz = op.diff_param_sz();
+    let mut grad_acc = Vec::with_capacity(grad_sz);
+    grad_acc.resize(grad_sz, 0.0);
     PolicyGradWorker{
       cfg:      cfg,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
+      base_pg:  BasePgWorker::new(cfg.batch_sz, cfg.max_horizon),
       grad_acc: grad_acc,
-      act_dist: DiscreteDist32::new(<E::Action as Action>::dim()),
     }
   }
 
   pub fn sample<R>(&mut self, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
-    let action_dim = <E::Action as Action>::dim();
+    self.base_pg.sample(&mut self.operator, &mut self.cache, episodes, init_cfg, rng);
+    /*let action_dim = <E::Action as Action>::dim();
     for episode in episodes {
       episode.reset(init_cfg, rng);
       for k in episode.steps.len() .. self.cfg.max_horizon {
@@ -273,7 +227,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
         }
       }
       episode.fill_suffixes();
-    }
+    }*/
   }
 }
 
@@ -311,7 +265,8 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
               episode.suffixes[k]),
         };
         assert!(sample.weight().is_some());
-        sample.init_weight(self.cfg.baseline);
+        sample.set_baseline(self.cfg.baseline);
+        sample.init_weight();
         sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
         self.cache.push(sample);
         if self.cache.len() < self.cfg.batch_sz {

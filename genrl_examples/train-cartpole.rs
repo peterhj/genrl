@@ -16,10 +16,11 @@ use rng::xorshift::{Xorshiftplus128Rng};
 use rand::{thread_rng};
 
 fn main() {
-  let init_cfg = CartpoleConfig::default();
+  let mut init_cfg = CartpoleConfig::default();
+  init_cfg.horizon = 300;
   let batch_sz = 32;
   let minibatch_sz = 32;
-  let horizon = 100; //init_cfg.horizon;
+  let max_horizon = init_cfg.horizon;
   let max_iter = 1000;
 
   let mut op_cfg = vec![];
@@ -65,8 +66,8 @@ fn main() {
   let pg_cfg = PolicyGradConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
-    step_size:      1.0,
-    max_horizon:    horizon,
+    step_size:      0.05,
+    max_horizon:    max_horizon,
     baseline:       0.0,
   };
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
