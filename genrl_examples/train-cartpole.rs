@@ -9,6 +9,7 @@ extern crate rand;
 use genrl::examples::cartpole::{CartpoleConfig, CartpoleEnv};
 use genrl::env::{Episode};
 use genrl::opt::pg::{PolicyGradConfig, PolicyGradWorker};
+use genrl::wrappers::{DiscountedWrapConfig, DiscountedWrapEnv};
 use neuralops::prelude::*;
 use operator::prelude::*;
 use rng::xorshift::{Xorshiftplus128Rng};
@@ -18,6 +19,10 @@ use rand::{thread_rng};
 fn main() {
   let mut init_cfg = CartpoleConfig::default();
   init_cfg.horizon = 300;
+  let wrap_init_cfg = DiscountedWrapConfig{
+    discount:   0.99,
+    env_init:   init_cfg,
+  };
   let batch_sz = 32;
   let minibatch_sz = 32;
   let max_horizon = init_cfg.horizon;
@@ -71,16 +76,16 @@ fn main() {
     baseline:       0.0,
   };
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-  let mut policy_grad: PolicyGradWorker<CartpoleEnv, _> = PolicyGradWorker::new(pg_cfg, op);
+  let mut policy_grad: PolicyGradWorker<DiscountedWrapEnv<CartpoleEnv>, _> = PolicyGradWorker::new(pg_cfg, op);
   policy_grad.init_param(&mut rng);
 
-  let mut episodes_batch: Vec<Episode<CartpoleEnv>> = Vec::with_capacity(minibatch_sz);
+  let mut episodes_batch: Vec<Episode<DiscountedWrapEnv<CartpoleEnv>>> = Vec::with_capacity(minibatch_sz);
   for _ in 0 .. minibatch_sz {
     episodes_batch.push(Episode::new());
   }
 
   for iter_nr in 0 .. max_iter {
-    policy_grad.sample(&mut episodes_batch, &init_cfg, &mut rng);
+    policy_grad.sample(&mut episodes_batch, &wrap_init_cfg, &mut rng);
     let mut episodes_iter = episodes_batch.clone();
     policy_grad.step(&mut episodes_iter.drain( .. ));
     if iter_nr % 1 == 0 {

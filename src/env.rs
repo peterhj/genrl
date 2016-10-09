@@ -196,12 +196,13 @@ pub trait EnvSerialize: Env {
   fn serialize(&mut self, buf: &mut Write);
 }
 
-pub trait EnvOpaqueRepr<Obs>: Env {
+/*pub trait EnvOpaqueRepr<Obs>: Env {
   fn extract_opaque_observable(&mut self, obs: &mut Obs);
-}
+}*/
 
 pub trait EnvRepr<T>: Env {
-  fn observable_len(&mut self) -> usize;
+  #[deprecated] fn observable_len(&mut self) -> usize { self.observable_sz() }
+  fn observable_sz(&mut self) -> usize;
   fn extract_observable(&mut self, obs: &mut [T]);
 }
 
@@ -237,6 +238,7 @@ pub struct Episode<E> where E: Env {
   pub init_env: Rc<RefCell<E>>,
   pub steps:    Vec<EpisodeStep<E>>,
   pub suffixes: Vec<Option<E::Response>>,
+  final_value:  Option<E::Response>,
 }
 
 impl<E> Clone for Episode<E> where E: Env {
@@ -245,6 +247,7 @@ impl<E> Clone for Episode<E> where E: Env {
       init_env: self.init_env.clone(),
       steps:    self.steps.clone(),
       suffixes: self.suffixes.clone(),
+      final_value:  self.final_value,
     }
   }
 }
@@ -255,6 +258,7 @@ impl<E> Episode<E> where E: Env {
       init_env: Rc::new(RefCell::new(Default::default())),
       steps:    vec![],
       suffixes: vec![],
+      final_value:  None,
     }
   }
 
@@ -271,14 +275,24 @@ impl<E> Episode<E> where E: Env {
     }
   }
 
+  pub fn set_final_value(&mut self, v: E::Response) {
+    self.final_value = Some(v);
+  }
+
   pub fn fill_suffixes(&mut self) {
     let horizon = self.steps.len();
     self.suffixes.clear();
     for k in 0 .. horizon {
       self.suffixes.push(self.steps[k].res);
     }
-    let mut suffix = self.steps[horizon-1].res;
-    for k in (0 .. horizon-1).rev() {
+    let mut suffix = if self.terminated() {
+      None
+    } else if let Some(v) = self.final_value {
+      Some(v)
+    } else {
+      None
+    };
+    for k in (0 .. horizon).rev() {
       if suffix.is_none() {
         suffix = self.steps[k].res;
       } else if let Some(prefix) = self.steps[k].res {

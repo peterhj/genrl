@@ -100,7 +100,7 @@ impl EnvConvert<BanditEnv> for BanditEnv {
 }
 
 impl EnvRepr<f32> for BanditEnv {
-  fn observable_len(&mut self) -> usize {
+  fn observable_sz(&mut self) -> usize {
     10
   }
 

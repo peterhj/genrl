@@ -58,7 +58,7 @@ pub struct CartpoleConfig {
   pub x_thresh:     f32,
   pub theta_thresh: f32,
   pub horizon:      usize,
-  pub discount:     f32,
+  //pub discount:     f32,
 }
 
 impl Default for CartpoleConfig {
@@ -73,7 +73,7 @@ impl Default for CartpoleConfig {
       x_thresh:       2.4,
       theta_thresh:   (12.0 / 360.0) * 2.0 * PI,
       horizon:        100,
-      discount:       0.99,
+      //discount:       0.99,
     }
   }
 }
@@ -98,7 +98,8 @@ pub struct CartpoleEnv {
 impl Env for CartpoleEnv {
   type Init     = CartpoleConfig;
   type Action   = CartpoleAction;
-  type Response = Discounted<f32>;
+  //type Response = Discounted<f32>;
+  type Response = f32;
 
   fn reset<R>(&mut self, init: &CartpoleConfig, rng: &mut R) where R: Rng + Sized {
     self.cfg = *init;
@@ -121,7 +122,8 @@ impl Env for CartpoleEnv {
     true
   }
 
-  fn step(&mut self, action: &CartpoleAction) -> Result<Option<Discounted<f32>>, ()> {
+  //fn step(&mut self, action: &CartpoleAction) -> Result<Option<Discounted<f32>>, ()> {
+  fn step(&mut self, action: &CartpoleAction) -> Result<Option<f32>, ()> {
     //if self.is_terminal() {
     if self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh {
       self.state.terminated = true;
@@ -139,16 +141,16 @@ impl Env for CartpoleEnv {
     next_state.theta_dot = self.state.theta_dot + self.cfg.time_delta * theta_acc;
     next_state.terminated = self.state.terminated;
     self.state = next_state;
-    if self.state.terminated {
+    /*if self.state.terminated {
       Ok(Some(Discounted{value: 0.0, discount: self.cfg.discount}))
     } else {
       Ok(Some(Discounted{value: 1.0, discount: self.cfg.discount}))
-    }
-    /*if self.state.terminated {
-      Ok(Some(OnlineAveraged::new(0.0)))
-    } else {
-      Ok(Some(OnlineAveraged::new(1.0)))
     }*/
+    if self.state.terminated {
+      Ok(Some(0.0))
+    } else {
+      Ok(Some(1.0))
+    }
   }
 }
 
@@ -162,7 +164,7 @@ impl EnvConvert<CartpoleEnv> for CartpoleEnv {
 }
 
 impl EnvRepr<f32> for CartpoleEnv {
-  fn observable_len(&mut self) -> usize {
+  fn observable_sz(&mut self) -> usize {
     4
   }
 

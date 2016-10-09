@@ -93,18 +93,18 @@ where E: Env + EnvRepr<f32>,
   _marker:  PhantomData<(E, T, S)>,
 }*/
 
-pub struct BasePgWorker<E, Op> where E: Env {
+pub struct BasePgWorker<E, PolicyOp> where E: Env {
   max_horizon:  usize,
   act_dist:     DiscreteDist32,
-  _marker:      PhantomData<(E, Op)>,
+  _marker:      PhantomData<(E, PolicyOp)>,
 }
 
-impl<E, Op> BasePgWorker<E, Op>
+impl<E, PolicyOp> BasePgWorker<E, PolicyOp>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      PolicyOp: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
 {
-  pub fn new(batch_sz: usize, max_horizon: usize) -> BasePgWorker<E, Op> {
+  pub fn new(batch_sz: usize, max_horizon: usize) -> BasePgWorker<E, PolicyOp> {
     BasePgWorker{
       max_horizon:  max_horizon,
       act_dist:     DiscreteDist32::new(<E::Action as Action>::dim()),
@@ -112,7 +112,7 @@ where E: Env + EnvRepr<f32> + Clone,
     }
   }
 
-  pub fn sample<R>(&mut self, operator: &mut Op, cache: &mut Vec<EpisodeStepSample<E>>, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
+  pub fn sample<R>(&mut self, policy: &mut PolicyOp, /*value: Option<&mut ValueOp>,*/ cache: &mut Vec<EpisodeStepSample<E>>, episodes: &mut [Episode<E>], init_cfg: &E::Init, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for episode in episodes {
       episode.reset(init_cfg, rng);
@@ -129,10 +129,10 @@ where E: Env + EnvRepr<f32> + Clone,
         cache.clear();
         cache.push(sample);
 
-        operator.load_data(&cache);
-        operator.forward(OpPhase::Inference);
+        policy.load_data(&cache);
+        policy.forward(OpPhase::Learning);
 
-        let output = operator.get_output();
+        let output = policy.get_output();
         self.act_dist.reset(&output.borrow()[ .. action_dim]);
         let act_idx = self.act_dist.sample(rng).unwrap();
         let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
@@ -145,6 +145,9 @@ where E: Env + EnvRepr<f32> + Clone,
         } else {
           panic!();
         }
+      }
+      if !episode.terminated() {
+        // FIXME(20161008): bootstrap with the value of the last state.
       }
       episode.fill_suffixes();
     }
@@ -264,7 +267,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
               Some(episode.steps[k].action.idx()),
               episode.suffixes[k]),
         };
-        assert!(sample.weight().is_some());
+        assert!(sample.suffix_r.is_some());
         sample.set_baseline(self.cfg.baseline);
         sample.init_weight();
         sample.mix_weight(1.0 / self.cfg.minibatch_sz as f32);
