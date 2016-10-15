@@ -71,6 +71,7 @@ fn main() {
   let pg_cfg = PolicyGradConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
+    //step_size:      1.0,
     step_size:      0.05,
     max_horizon:    max_horizon,
     baseline:       0.0,

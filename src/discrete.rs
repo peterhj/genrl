@@ -269,7 +269,7 @@ impl DiscreteDist32 {
     self.len
   }
 
-  pub fn reset(&mut self, weights: &[f32]) {
+  pub fn reset(&mut self, weights: &[f32]) -> Result<(), ()> {
     assert_eq!(self.len, weights.len());
     self.zeros.clear();
     /*self.heap.data[self.heap.leaf_idx .. self.heap.leaf_idx + self.len]
@@ -280,8 +280,9 @@ impl DiscreteDist32 {
       /*if !(w >= 0.0) {
         panic!("WARNING: bad discrete dist weight: {:e}", w);
       }*/
-      assert!(!w.is_nan());
-      assert!(w >= 0.0);
+      if w.is_nan() || w < 0.0 {
+        return Err(());
+      }
       if w == 0.0 {
         self.zeros.set(idx, true);
       }
@@ -297,6 +298,7 @@ impl DiscreteDist32 {
       let right_idx = self.heap.right(idx);
       self.heap.data[idx] = self.heap.data[left_idx] + self.heap.data[right_idx];
     }
+    Ok(())
   }
 
   pub fn zero(&mut self, j: usize) {

@@ -1,3 +1,4 @@
+extern crate densearray;
 extern crate operator;
 extern crate rng;
 extern crate sharedmem;

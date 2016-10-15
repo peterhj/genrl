@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 bit-set = "*"
 rand = "*"
+densearray = { path = "../libdensearray" }
 #neuralops = { path = "../neuralops" }
 operator = { path = "../liboperator" }
 rng = { path = "../librng" }

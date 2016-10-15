@@ -1,6 +1,7 @@
 use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Value, Episode, EpisodeStep};
 
+use densearray::prelude::*;
 use operator::prelude::*;
 use operator::rw::{ReadBuffer, ReadAccumulateBuffer, WriteBuffer, AccumulateBuffer};
 use rng::xorshift::{Xorshiftplus128Rng};
@@ -10,6 +11,7 @@ use rand::{Rng};
 use std::cell::{RefCell};
 use std::cmp::{min};
 use std::marker::{PhantomData};
+use std::ops::{Deref};
 use std::rc::{Rc};
 
 pub struct EpisodeStepSample<E> where E: Env {
@@ -68,6 +70,12 @@ impl<E> SampleLossWeight<ClassLoss> for EpisodeStepSample<E> where E: Env {
   }
 }
 
+pub trait StochasticPolicy {
+  type P: Deref<Target=[f32]>;
+
+  fn policy_probs(&self) -> Self::P;
+}
+
 pub struct BasePgWorker<E, PolicyOp> where E: Env {
   batch_sz:     usize,
   minibatch_sz: usize,
@@ -82,7 +90,8 @@ pub struct BasePgWorker<E, PolicyOp> where E: Env {
 impl<E, PolicyOp> BasePgWorker<E, PolicyOp>
 where E: Env + EnvRepr<f32> + Clone,
       E::Action: DiscreteAction,
-      PolicyOp: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      //PolicyOp: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      PolicyOp: DiffLoss<EpisodeStepSample<E>> + StochasticPolicy,
 {
   pub fn new(minibatch_sz: usize, max_horizon: usize) -> BasePgWorker<E, PolicyOp> {
     let mut episodes = Vec::with_capacity(minibatch_sz);
@@ -139,13 +148,15 @@ where E: Env + EnvRepr<f32> + Clone,
         let sample = EpisodeStepSample::new(prev_env, None, None);
         cache.clear();
         cache.push(sample);
-        policy.load_data(&cache);
+        policy.load_batch(&cache);
         policy.forward(OpPhase::Learning);
-        let output = policy.get_output();
-        // FIXME(20161009): sometimes the policy output contains NaNs because
+        let output = policy.policy_probs();
+        // XXX(20161009): sometimes the policy output contains NaNs because
         // all probabilities were zero, should gracefully handle this case.
-        self.act_dist.reset(&output.borrow()[ .. action_dim]);
-        let act_idx = self.act_dist.sample(rng).unwrap();
+        let act_idx = match self.act_dist.reset(&(*output)[ .. action_dim]) {
+          Ok(_)   => self.act_dist.sample(rng).unwrap(),
+          Err(_)  => rng.gen_range(0, <E::Action as Action>::dim()),
+        };
         let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
         if let Ok(res) = next_env.step(&action) {
           episode.steps.push(EpisodeStep{
@@ -160,7 +171,7 @@ where E: Env + EnvRepr<f32> + Clone,
       if !episode.terminated() {
         if false /*let Some(ref mut value_op) = value*/ {
           let impute_val = 0.0; // FIXME: get from the value op.
-          /*value_op.load_data(&cache);
+          /*value_op.load_batch(&cache);
           value_op.forward(OpPhase::Learning);
           let impute_val = value_op.get_output().borrow()[0];*/
           self.final_values[idx] = Some(impute_val);
@@ -207,11 +218,18 @@ where E: Env + EnvRepr<f32> + Clone,
         let sample = EpisodeStepSample::new(prev_env, None, None);
         cache.clear();
         cache.push(sample);
-        policy.load_data(&cache);
+        policy.load_batch(&cache);
         policy.forward(OpPhase::Learning);
-        let output = policy.get_output();
-        self.act_dist.reset(&output.borrow()[ .. action_dim]);
-        let act_idx = self.act_dist.sample(rng).unwrap();
+        /*let output = policy.policy_probs();
+        self.act_dist.reset(&(*output)[ .. action_dim]);
+        let act_idx = self.act_dist.sample(rng).unwrap();*/
+        let output = policy.policy_probs();
+        // XXX(20161009): sometimes the policy output contains NaNs because
+        // all probabilities were zero, should gracefully handle this case.
+        let act_idx = match self.act_dist.reset(&(*output)[ .. action_dim]) {
+          Ok(_)   => self.act_dist.sample(rng).unwrap(),
+          Err(_)  => rng.gen_range(0, <E::Action as Action>::dim()),
+        };
         let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
         if let Ok(res) = next_env.step(&action) {
           episode.steps.push(EpisodeStep{
@@ -243,29 +261,37 @@ pub struct PolicyGradConfig {
 pub struct PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      //Op: DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      Op: DiffLoss<EpisodeStepSample<E>> + StochasticPolicy,
 {
   cfg:      PolicyGradConfig,
+  grad_sz:  usize,
   operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
   base_pg:  BasePgWorker<E, Op>,
+  param:    Vec<f32>,
   grad_acc: Vec<f32>,
 }
 
 impl<E, Op> PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      //Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      Op: DiffLoss<EpisodeStepSample<E>> + StochasticPolicy,
 {
-  pub fn new(cfg: PolicyGradConfig, op: Op) -> PolicyGradWorker<E, Op> {
+  pub fn new(cfg: PolicyGradConfig, mut op: Op) -> PolicyGradWorker<E, Op> {
     let grad_sz = op.diff_param_sz();
+    let mut param = Vec::with_capacity(grad_sz);
+    param.resize(grad_sz, 0.0);
     let mut grad_acc = Vec::with_capacity(grad_sz);
     grad_acc.resize(grad_sz, 0.0);
     PolicyGradWorker{
       cfg:      cfg,
+      grad_sz:  grad_sz,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
       base_pg:  BasePgWorker::new(cfg.minibatch_sz, cfg.max_horizon),
+      param:    param,
       grad_acc: grad_acc,
     }
   }
@@ -278,12 +304,14 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 impl<E, Op> OptWorker<f32, Episode<E>> for PolicyGradWorker<E, Op>
 where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       E::Action: DiscreteAction,
-      Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      //Op: DiffOperator<f32> + DiffOperatorInput<f32, EpisodeStepSample<E>> + DiffOperatorOutput<f32, RwSlice<f32>>,
+      Op: DiffLoss<EpisodeStepSample<E>, IoBuf=[f32]> + StochasticPolicy,
 {
-  type Rng = Op::Rng;
+  type Rng = Xorshiftplus128Rng;
 
   fn init_param(&mut self, rng: &mut Self::Rng) {
     self.operator.init_param(rng);
+    self.operator.store_diff_param(&mut self.param);
   }
 
   fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
@@ -294,6 +322,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
     self.operator.reset_loss();
     self.operator.reset_grad();
     self.cache.clear();
+    self.operator.next_iteration();
     for episode in episodes.take(self.cfg.minibatch_sz) {
       for k in 0 .. episode.steps.len() {
         let mut sample = match k {
@@ -314,20 +343,23 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
         if self.cache.len() < self.cfg.batch_sz {
           continue;
         }
-        self.operator.load_data(&self.cache);
+        self.operator.load_batch(&self.cache);
         self.operator.forward(OpPhase::Learning);
         self.operator.backward();
         self.cache.clear();
       }
     }
     if !self.cache.is_empty() {
-      self.operator.load_data(&self.cache);
+      self.operator.load_batch(&self.cache);
       self.operator.forward(OpPhase::Learning);
       self.operator.backward();
       self.cache.clear();
     }
-    self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
-    self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
+    //self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
+    //self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
+    self.operator.store_grad(&mut self.grad_acc);
+    self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.grad_acc.reshape(self.grad_sz));
+    self.operator.load_diff_param(&mut self.param);
   }
 
   fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {

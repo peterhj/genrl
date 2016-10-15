@@ -309,6 +309,10 @@ impl<E> Episode<E> where E: Env {
     self.steps.len()
   }
 
+  pub fn value(&self) -> Option<f32> {
+    self.suffixes[0].map(|r| r.as_scalar())
+  }
+
   pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng + Sized {
     self.init_env.borrow_mut().reset(init_cfg, rng);
     self.steps.clear();
