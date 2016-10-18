@@ -66,19 +66,19 @@ impl Env for BanditEnv {
   type Action   = BanditAction;
   type Response = HorizonAveraged<f32>;
 
-  fn reset<R>(&mut self, init: &BanditConfig, rng: &mut R) where R: Rng + Sized {
+  fn reset<R>(&self, init: &BanditConfig, rng: &mut R) where R: Rng + Sized {
     self.rng = Xorshiftplus128Rng::new(rng);
   }
 
-  fn is_terminal(&mut self) -> bool {
+  fn is_terminal(&self) -> bool {
     false
   }
 
-  fn is_legal_action(&mut self, action: &BanditAction) -> bool {
+  fn is_legal_action(&self, action: &BanditAction) -> bool {
     true
   }
 
-  fn step(&mut self, action: &BanditAction) -> Result<Option<HorizonAveraged<f32>>, ()> {
+  fn step(&self, action: &BanditAction) -> Result<Option<HorizonAveraged<f32>>, ()> {
     //self.dist.ind_sample(&mut self.rng);
     if action.idx == 7 {
       Ok(Some(HorizonAveraged{value: 1.0, horizon: 100}))
@@ -100,11 +100,11 @@ impl EnvConvert<BanditEnv> for BanditEnv {
 }
 
 impl EnvRepr<f32> for BanditEnv {
-  fn observable_sz(&mut self) -> usize {
+  fn observable_sz(&self) -> usize {
     10
   }
 
-  fn extract_observable(&mut self, obs: &mut [f32]) {
+  fn extract_observable(&self, obs: &mut [f32]) {
     /*obs[0] = self.state.x;
     obs[1] = self.state.x_dot;
     obs[2] = self.state.theta;

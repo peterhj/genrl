@@ -13,7 +13,8 @@ use std::marker::{PhantomData};
 use std::rc::{Rc};
 
 pub struct EpisodeStepSample<E> where E: Env {
-  pub env:      Rc<RefCell<E>>,
+  //pub env:      Rc<RefCell<E>>,
+  pub env:      Rc<E>,
   pub act_idx:  Option<u32>,
   pub suffix_r: Option<E::Response>,
   pub baseline: Option<f32>,
@@ -21,7 +22,7 @@ pub struct EpisodeStepSample<E> where E: Env {
 }
 
 impl<E> EpisodeStepSample<E> where E: Env {
-  pub fn new(env: Rc<RefCell<E>>, act_idx: Option<u32>, suffix_r: Option<E::Response>) -> EpisodeStepSample<E> {
+  pub fn new(env: Rc<E>, act_idx: Option<u32>, suffix_r: Option<E::Response>) -> EpisodeStepSample<E> {
     EpisodeStepSample{
       env:          env,
       act_idx:      act_idx,
@@ -42,7 +43,7 @@ impl<E> EpisodeStepSample<E> where E: Env {
 
 impl<E> SampleDatum<[f32]> for EpisodeStepSample<E> where E: Env + EnvRepr<f32> {
   fn extract_input(&self, output: &mut [f32]) -> Result<(), ()> {
-    self.env.borrow_mut().extract_observable(output);
+    self.env.extract_observable(output);
     Ok(())
   }
 }
@@ -163,12 +164,13 @@ where E: Env + EnvRepr<f32> + Clone,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        let mut next_env: E = prev_env.borrow().clone();
+        let mut next_env = (*prev_env).clone();
         if let Ok(res) = next_env.step(&action) {
           episode.steps.push(EpisodeStep{
             action:   action,
             res:      res,
-            next_env: Rc::new(RefCell::new(next_env)),
+            //next_env: Rc::new(RefCell::new(next_env)),
+            next_env: Rc::new(next_env),
           });
         } else {
           panic!();
@@ -240,7 +242,7 @@ where E: Env + EnvRepr<f32> + Clone,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        let mut next_env: E = prev_env.borrow().clone();
+        let mut next_env = (*prev_env).clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
         cache.clear();
         cache.push(sample);
@@ -256,7 +258,8 @@ where E: Env + EnvRepr<f32> + Clone,
           episode.steps.push(EpisodeStep{
             action:   action,
             res:      res,
-            next_env: Rc::new(RefCell::new(next_env)),
+            //next_env: Rc::new(RefCell::new(next_env)),
+            next_env: Rc::new(next_env),
           });
         } else {
           panic!();
@@ -308,7 +311,7 @@ where E: Env + EnvRepr<f32> + Clone,
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        let mut next_env: E = prev_env.borrow().clone();
+        let mut next_env = (*prev_env).clone();
         let sample = EpisodeStepSample::new(prev_env, None, None);
         cache.clear();
         cache.push(sample);
@@ -322,7 +325,8 @@ where E: Env + EnvRepr<f32> + Clone,
           episode.steps.push(EpisodeStep{
             action:   action,
             res:      res,
-            next_env: Rc::new(RefCell::new(next_env)),
+            //next_env: Rc::new(RefCell::new(next_env)),
+            next_env: Rc::new(next_env),
           });
         } else {
           panic!();

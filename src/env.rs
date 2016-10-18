@@ -215,17 +215,17 @@ pub trait Env: Default {
 
   /// Reset the environment according to the initial state distribution and
   /// other initial configuration.
-  fn reset<R>(&mut self, init: &Self::Init, rng: &mut R) where R: Rng + Sized;
+  fn reset<R>(&self, init: &Self::Init, rng: &mut R) where R: Rng + Sized;
 
   /// Check if the environment is at a terminal state (no more legal actions).
-  fn is_terminal(&mut self) -> bool;
+  fn is_terminal(&self) -> bool;
 
   /// Check if an action is legal. Can be expensive if this involves simulating
   /// the action using `step`.
-  fn is_legal_action(&mut self, action: &Self::Action) -> bool;
+  fn is_legal_action(&self, action: &Self::Action) -> bool;
 
   /// Try to execute an action, returning an error if the action is illegal.
-  fn step(&mut self, action: &Self::Action) -> Result<Option<Self::Response>, ()>;
+  fn step(&self, action: &Self::Action) -> Result<Option<Self::Response>, ()>;
 }
 
 pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
@@ -245,8 +245,8 @@ pub trait EnvSerialize: Env {
 
 pub trait EnvRepr<T>: Env {
   #[deprecated] fn observable_len(&mut self) -> usize { self.observable_sz() }
-  fn observable_sz(&mut self) -> usize;
-  fn extract_observable(&mut self, obs: &mut [T]);
+  fn observable_sz(&self) -> usize;
+  fn extract_observable(&self, obs: &mut [T]);
 }
 
 pub trait EnvConvert<Target>: Env where Target: Env {
@@ -263,7 +263,8 @@ pub trait EnvConvert<Target>: Env where Target: Env {
 pub struct EpisodeStep<E> where E: Env {
   pub action:   E::Action,
   pub res:      Option<E::Response>,
-  pub next_env: Rc<RefCell<E>>,
+  //pub next_env: Rc<RefCell<E>>,
+  pub next_env: Rc<E>,
 }
 
 impl<E> Clone for EpisodeStep<E> where E: Env {
@@ -278,7 +279,8 @@ impl<E> Clone for EpisodeStep<E> where E: Env {
 
 //#[derive(Clone)]
 pub struct Episode<E> where E: Env {
-  pub init_env: Rc<RefCell<E>>,
+  //pub init_env: Rc<RefCell<E>>,
+  pub init_env: Rc<E>,
   pub steps:    Vec<EpisodeStep<E>>,
   pub suffixes: Vec<Option<E::Response>>,
   //final_value:  Option<E::Response>,
@@ -298,7 +300,8 @@ impl<E> Clone for Episode<E> where E: Env {
 impl<E> Episode<E> where E: Env {
   pub fn new() -> Episode<E> {
     Episode{
-      init_env: Rc::new(RefCell::new(Default::default())),
+      //init_env: Rc::new(RefCell::new(Default::default())),
+      init_env: Rc::new(Default::default()),
       steps:    vec![],
       suffixes: vec![],
       //final_value:  None,
@@ -314,15 +317,15 @@ impl<E> Episode<E> where E: Env {
   }
 
   pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng + Sized {
-    self.init_env.borrow_mut().reset(init_cfg, rng);
+    self.init_env.reset(init_cfg, rng);
     self.steps.clear();
     self.suffixes.clear();
   }
 
   pub fn terminated(&self) -> bool {
     match self.steps.len() {
-      0   => self.init_env.borrow_mut().is_terminal(),
-      len => self.steps[len-1].next_env.borrow_mut().is_terminal(),
+      0   => self.init_env.is_terminal(),
+      len => self.steps[len-1].next_env.is_terminal(),
     }
   }
 
