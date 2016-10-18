@@ -314,9 +314,9 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
     self.operator.store_diff_param(&mut self.param);
   }
 
-  fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
+  /*fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
   fn store_local_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
-  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
+  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }*/
 
   fn step(&mut self, episodes: &mut Iterator<Item=Episode<E>>) {
     self.operator.reset_loss();

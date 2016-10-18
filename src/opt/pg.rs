@@ -74,6 +74,7 @@ pub struct BasePgWorker<E, PolicyOp> where E: Env {
   max_horizon:  usize,
   act_dist:     DiscreteDist32,
   episodes:     Vec<Episode<E>>,
+  episode_ks:   Vec<usize>,
   step_values:  Vec<Vec<f32>>,
   final_values: Vec<Option<f32>>,
   _marker:      PhantomData<(E, PolicyOp)>,
@@ -89,6 +90,8 @@ where E: Env + EnvRepr<f32> + Clone,
     for _ in 0 .. minibatch_sz {
       episodes.push(Episode::new());
     }
+    let mut episode_ks = Vec::with_capacity(minibatch_sz);
+    episode_ks.resize(minibatch_sz, 0);
     let mut step_values = Vec::with_capacity(minibatch_sz);
     for _ in 0 .. minibatch_sz {
       step_values.push(vec![]);
@@ -101,6 +104,7 @@ where E: Env + EnvRepr<f32> + Clone,
       max_horizon:  max_horizon,
       act_dist:     DiscreteDist32::new(<E::Action as Action>::dim()),
       episodes:     episodes,
+      episode_ks:   episode_ks,
       step_values:  step_values,
       final_values: final_values,
       _marker:      PhantomData,
@@ -110,6 +114,107 @@ where E: Env + EnvRepr<f32> + Clone,
   pub fn reset_episodes<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng {
     for episode in self.episodes.iter_mut() {
       episode.reset(init_cfg, rng);
+    }
+  }
+
+  pub fn batch_sample_steps<V, R>(&mut self, max_num_steps: Option<usize>, value_cfg: V::Cfg, policy: &mut PolicyOp, /*value: Option<&mut ValueOp>,*/ cache: &mut Vec<EpisodeStepSample<E>>, init_cfg: &E::Init, rng: &mut R) where V: Value<Res=E::Response>, R: Rng {
+    let action_dim = <E::Action as Action>::dim();
+    for episode in self.episodes.iter_mut() {
+      if episode.terminated() || episode.horizon() >= self.max_horizon {
+        episode.reset(init_cfg, rng);
+      }
+    }
+    for (idx, episode) in self.episodes.iter_mut().enumerate() {
+      let init_horizon = episode.horizon();
+      self.episode_ks[idx] = init_horizon;
+    }
+    let mut step_offset = 0;
+    loop {
+      let mut term_count = 0;
+      cache.clear();
+      for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        if episode.terminated() {
+          // FIXME(20161017): `cache` still wants a sample.
+          term_count += 1;
+          continue;
+        }
+        let k = self.episode_ks[idx] + step_offset;
+        let prev_env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        //let mut next_env: E = prev_env.borrow().clone();
+        let sample = EpisodeStepSample::new(prev_env, None, None);
+        cache.push(sample);
+      }
+      policy.load_data(&cache);
+      policy.forward(OpPhase::Learning);
+      for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        let output = policy.get_output();
+        // FIXME(20161009): sometimes the policy output contains NaNs because
+        // all probabilities were zero, should gracefully handle this case.
+        let act_idx = match self.act_dist.reset(&output.borrow()[idx * action_dim .. (idx+1) * action_dim]) {
+          Ok(_)   => self.act_dist.sample(rng).unwrap(),
+          Err(_)  => rng.gen_range(0, action_dim),
+        };
+        let action = <E::Action as DiscreteAction>::from_idx(act_idx as u32);
+        let k = self.episode_ks[idx] + step_offset;
+        let prev_env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        let mut next_env: E = prev_env.borrow().clone();
+        if let Ok(res) = next_env.step(&action) {
+          episode.steps.push(EpisodeStep{
+            action:   action,
+            res:      res,
+            next_env: Rc::new(RefCell::new(next_env)),
+          });
+        } else {
+          panic!();
+        }
+      }
+      step_offset += 1;
+      if term_count == self.episodes.len() {
+        break;
+      } else if let Some(max_num_steps) = max_num_steps {
+        if step_offset >= max_num_steps {
+          break;
+        }
+      }
+    }
+    for (idx, episode) in self.episodes.iter_mut().enumerate() {
+      if !episode.terminated() {
+        if false /*let Some(ref mut value_op) = value*/ {
+          let impute_val = 0.0; // FIXME: get from the value op.
+          /*value_op.load_data(&cache);
+          value_op.forward(OpPhase::Learning);
+          let impute_val = value_op.get_output().borrow()[0];*/
+          self.final_values[idx] = Some(impute_val);
+        } else {
+          self.final_values[idx] = None;
+        }
+      } else {
+        self.final_values[idx] = None;
+      }
+      let mut suffix_val = if let Some(final_val) = self.final_values[idx] {
+        Some(<V as Value>::from_scalar(final_val, value_cfg))
+      } else {
+        None
+      };
+      self.step_values[idx].resize(episode.horizon(), 0.0);
+      for k in (self.episode_ks[idx] .. episode.horizon()).rev() {
+        if let Some(res) = episode.steps[k].res {
+          if let Some(ref mut suffix_val) = suffix_val {
+            suffix_val.lreduce(res);
+          } else {
+            suffix_val = Some(<V as Value>::from_res(res, value_cfg));
+          }
+        }
+        if let Some(suffix_val) = suffix_val {
+          self.step_values[idx][k] = suffix_val.to_scalar();
+        }
+      }
     }
   }
 
@@ -286,9 +391,9 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
     self.operator.init_param(rng);
   }
 
-  fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
+  /*fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
   fn store_local_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
-  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }
+  fn store_global_param(&mut self, param_writer: &mut WriteBuffer<f32>) { unimplemented!(); }*/
 
   fn step(&mut self, episodes: &mut Iterator<Item=Episode<E>>) {
     self.operator.reset_loss();
