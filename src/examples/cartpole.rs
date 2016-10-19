@@ -1,4 +1,4 @@
-use env::{Env, EnvConvert, EnvRepr, Action, DiscreteAction, Response, OnlineAveraged, Discounted};
+use env::{Env, EnvConvert, EnvInputRepr, EnvRepr, Action, DiscreteAction, Response, OnlineAveraged, Discounted};
 
 use operator::prelude::*;
 
@@ -158,6 +158,12 @@ impl Env for CartpoleEnv {
     } else {
       Ok(Some(1.0))
     }
+  }
+}
+
+impl EnvInputRepr<[f32]> for CartpoleEnv {
+  fn _shape3d(&self) -> (usize, usize, usize) {
+    (1, 1, 4)
   }
 }
 

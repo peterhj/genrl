@@ -243,6 +243,10 @@ pub trait EnvSerialize: Env {
   fn extract_opaque_observable(&mut self, obs: &mut Obs);
 }*/
 
+pub trait EnvInputRepr<U: ?Sized>: Env {
+  fn _shape3d(&self) -> (usize, usize, usize);
+}
+
 pub trait EnvRepr<T>: Env {
   #[deprecated] fn observable_len(&mut self) -> usize { self.observable_sz() }
   fn observable_sz(&self) -> usize;

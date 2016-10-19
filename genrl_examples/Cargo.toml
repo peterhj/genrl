@@ -7,6 +7,10 @@ authors = ["Peter Jin <peterhaijin@gmail.com>"]
 name = "train-cartpole"
 path = "train-cartpole.rs"
 
+[[bin]]
+name = "train-cartpole-new"
+path = "train-cartpole-new.rs"
+
 [dependencies]
 bit-set = "*"
 rand = "*"

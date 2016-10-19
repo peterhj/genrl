@@ -358,6 +358,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
   operator: Op,
   cache:    Vec<EpisodeStepSample<E>>,
   base_pg:  BasePgWorker<E, Op>,
+  param:    Vec<f32>,
   grad_acc: Vec<f32>,
 }
 
@@ -368,6 +369,8 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 {
   pub fn new(cfg: PolicyGradConfig, op: Op) -> PolicyGradWorker<E, Op> {
     let grad_sz = op.diff_param_sz();
+    let mut param = Vec::with_capacity(grad_sz);
+    param.resize(grad_sz, 0.0);
     let mut grad_acc = Vec::with_capacity(grad_sz);
     grad_acc.resize(grad_sz, 0.0);
     PolicyGradWorker{
@@ -375,6 +378,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
       operator: op,
       cache:    Vec::with_capacity(cfg.batch_sz),
       base_pg:  BasePgWorker::new(cfg.minibatch_sz, cfg.max_horizon),
+      param:    param,
       grad_acc: grad_acc,
     }
   }
@@ -393,6 +397,8 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
 
   fn init_param(&mut self, rng: &mut Self::Rng) {
     self.operator.init_param(rng);
+    self.operator.store_param(&mut self.param, 0);
+    println!("DEBUG: param: {:?}", self.param);
   }
 
   /*fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
@@ -437,6 +443,8 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
     }
     self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
     self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
+    self.operator.store_param(&mut self.param, 0);
+    println!("DEBUG: param: {:?}", self.param);
   }
 
   fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {
