@@ -77,7 +77,7 @@ pub trait StochasticPolicy {
   fn policy_probs(&self) -> Self::P;
 }
 
-pub struct BasePolicyGrad<E, V, PolicyOp> where E: 'static + Env, V: Value<Res=E::Response> {
+pub struct BasePolicyGrad<E, V, Policy> where E: 'static + Env, V: Value<Res=E::Response> {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
   pub max_horizon:  usize,
@@ -88,17 +88,18 @@ pub struct BasePolicyGrad<E, V, PolicyOp> where E: 'static + Env, V: Value<Res=E
   pub ep_k_offsets: Vec<usize>,
   pub ep_is_term:   Vec<bool>,
   pub step_values:  Vec<Vec<f32>>,
+  pub impute_vals:  Vec<Vec<f32>>,
   pub final_values: Vec<Option<f32>>,
-  _marker:  PhantomData<(E, V, PolicyOp)>,
+  _marker:  PhantomData<(E, V, Policy)>,
 }
 
-impl<E, V, PolicyOp> BasePolicyGrad<E, V, PolicyOp>
+impl<E, V, Policy> BasePolicyGrad<E, V, Policy>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      PolicyOp: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+      Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
 {
-  pub fn new<R>(minibatch_sz: usize, max_horizon: usize, init_cfg: &E::Init, rng: &mut R) -> BasePolicyGrad<E, V, PolicyOp> where R: Rng {
+  pub fn new<R>(minibatch_sz: usize, max_horizon: usize, init_cfg: &E::Init, rng: &mut R) -> BasePolicyGrad<E, V, Policy> where R: Rng {
     let mut cache = Vec::with_capacity(minibatch_sz);
     let mut cache_idxs = Vec::with_capacity(minibatch_sz);
     cache_idxs.resize(minibatch_sz, 0);
@@ -116,6 +117,10 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     for _ in 0 .. minibatch_sz {
       step_values.push(vec![]);
     }
+    let mut impute_vals = Vec::with_capacity(minibatch_sz);
+    for _ in 0 .. minibatch_sz {
+      impute_vals.push(vec![]);
+    }
     let mut final_values = Vec::with_capacity(minibatch_sz);
     final_values.resize(minibatch_sz, None);
     BasePolicyGrad{
@@ -129,12 +134,13 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       ep_k_offsets: ep_k_offsets,
       ep_is_term:   ep_is_term,
       step_values:  step_values,
+      impute_vals:  impute_vals,
       final_values: final_values,
       _marker:      PhantomData,
     }
   }
 
-  pub fn sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut PolicyOp, rng: &mut R) where R: Rng {
+  pub fn sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut Policy, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
       if episode.terminated() || episode.horizon() >= self.max_horizon {
@@ -218,7 +224,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn fill_values(&mut self, value_cfg: &V::Cfg) {
+  pub fn fill_step_values(&mut self, value_cfg: &V::Cfg) {
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
       let mut suffix_val = if let Some(final_val) = self.final_values[idx] {
         Some(<V as Value>::from_scalar(final_val, *value_cfg))
@@ -243,7 +249,12 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn impute_final_values<ValueOp>(&mut self, value_op: &mut ValueOp) where ValueOp: DiffLoss<SampleItem, IoBuf=[f32]> {
+  pub fn impute_step_values<ValueFn>(&mut self, value_op: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+    // FIXME(20161019)
+    unimplemented!();
+  }
+
+  pub fn impute_final_values<ValueFn>(&mut self, value_op: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
     self.cache.clear();
     self.cache_idxs.clear();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
@@ -289,35 +300,35 @@ pub struct PolicyGradConfig<E, V> where E: 'static + Env, V: Value<Res=E::Respon
   pub value_cfg:    V::Cfg,
 }
 
-pub struct SgdPolicyGradWorker<E, V, Op>
+pub struct SgdPolicyGradWorker<E, V, Policy>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      Op: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+      Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
 {
   cfg:      PolicyGradConfig<E, V>,
   grad_sz:  usize,
   rng:      Xorshiftplus128Rng,
-  base_pg:  BasePolicyGrad<E, V, Op>,
-  operator: Rc<RefCell<Op>>,
+  base_pg:  BasePolicyGrad<E, V, Policy>,
+  policy:   Rc<RefCell<Policy>>,
   cache:    Vec<SampleItem>,
   param:    Vec<f32>,
   grad:     Vec<f32>,
 }
 
-impl<E, V, Op> SgdPolicyGradWorker<E, V, Op>
+impl<E, V, Policy> SgdPolicyGradWorker<E, V, Policy>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      Op: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+      Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
 {
-  pub fn new(cfg: PolicyGradConfig<E, V>, op: Rc<RefCell<Op>>) -> SgdPolicyGradWorker<E, V, Op> {
+  pub fn new(cfg: PolicyGradConfig<E, V>, policy: Rc<RefCell<Policy>>) -> SgdPolicyGradWorker<E, V, Policy> {
     let batch_sz = cfg.batch_sz;
     let minibatch_sz = cfg.minibatch_sz;
     let max_horizon = cfg.max_horizon;
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
     let base_pg = BasePolicyGrad::new(minibatch_sz, max_horizon, &cfg.init_cfg, &mut rng);
-    let grad_sz = op.borrow_mut().diff_param_sz();
+    let grad_sz = policy.borrow_mut().diff_param_sz();
     //println!("DEBUG: grad sz: {}", grad_sz);
     let mut param = Vec::with_capacity(grad_sz);
     param.resize(grad_sz, 0.0);
@@ -328,7 +339,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       grad_sz:  grad_sz,
       rng:      rng,
       base_pg:  base_pg,
-      operator: op,
+      policy:   policy,
       cache:    Vec::with_capacity(batch_sz),
       param:    param,
       grad:     grad,
@@ -336,68 +347,57 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   }
 
   pub fn init_param(&mut self, rng: &mut Xorshiftplus128Rng) {
-    let mut operator = self.operator.borrow_mut();
-    operator.init_param(rng);
-    operator.store_diff_param(&mut self.param);
+    let mut policy = self.policy.borrow_mut();
+    policy.init_param(rng);
+    policy.store_diff_param(&mut self.param);
     //println!("DEBUG: param: {:?}", self.param);
   }
 
   pub fn update(&mut self) -> f32 {
-    let mut operator = self.operator.borrow_mut();
-    self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut operator, &mut self.rng);
-    self.base_pg.fill_values(&self.cfg.value_cfg);
-    operator.reset_loss();
-    operator.reset_grad();
-    operator.next_iteration();
+    let mut policy = self.policy.borrow_mut();
+    self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
+    self.base_pg.fill_step_values(&self.cfg.value_cfg);
+    policy.reset_loss();
+    policy.reset_grad();
+    policy.next_iteration();
     self.cache.clear();
     //print!("DEBUG: weights: ");
     for (idx, episode) in self.base_pg.episodes.iter().enumerate() {
       for k in self.base_pg.ep_k_offsets[idx] .. episode.horizon() {
         let mut item = SampleItem::new();
-        match k {
-          0 => {
-            let env = episode.init_env.clone();
-            let env_repr_dim = env._shape3d();
-            item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
-            item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
-          }
-          k => {
-            let env = episode.steps[k-1].next_env.clone();
-            let env_repr_dim = env._shape3d();
-            item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
-            item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
-          }
-        }
+        let env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        let env_repr_dim = env._shape3d();
+        item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
+        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         item.kvs.insert::<SampleClassLabelKey>(episode.steps[k].action.idx());
-        let w = self.base_pg.step_values[idx][k];
-        /*if k == 0 {
-          print!("{:?} ", w);
-        }*/
-        item.kvs.insert::<SampleWeightKey>(w);
+        item.kvs.insert::<SampleWeightKey>(self.base_pg.step_values[idx][k] - self.cfg.baseline);
         self.cache.push(item);
         if self.cache.len() < self.cfg.batch_sz {
           continue;
         }
-        operator.load_batch(&self.cache);
-        operator.forward(OpPhase::Learning);
-        operator.backward();
+        policy.load_batch(&self.cache);
+        policy.forward(OpPhase::Learning);
+        policy.backward();
         self.cache.clear();
       }
     }
     //println!("");
     if !self.cache.is_empty() {
-      operator.load_batch(&self.cache);
-      operator.forward(OpPhase::Learning);
-      operator.backward();
+      policy.load_batch(&self.cache);
+      policy.forward(OpPhase::Learning);
+      policy.backward();
       self.cache.clear();
     }
-    operator.store_grad(&mut self.grad);
+    policy.store_grad(&mut self.grad);
     //println!("DEBUG: grad:  {:?}", self.grad);
     // FIXME(20161018): only normalize by minibatch size if all episodes in the
     // minibatch are represented in the policy gradient.
     self.grad.reshape_mut(self.grad_sz).scale(1.0 / self.cfg.minibatch_sz as f32);
     self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.grad.reshape(self.grad_sz));
-    operator.load_diff_param(&mut self.param);
+    policy.load_diff_param(&mut self.param);
     //println!("DEBUG: param: {:?}", self.param);
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
@@ -406,9 +406,6 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     avg_value /= self.cfg.minibatch_sz as f32;
     avg_value
   }
-
-  /*fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {
-  }*/
 }
 
 /*impl<E, Op> OptStats<()> for SgdPolicyGradWorker<E, Op>
