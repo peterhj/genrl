@@ -11,6 +11,10 @@ path = "train-cartpole.rs"
 name = "train-cartpole-new"
 path = "train-cartpole-new.rs"
 
+[[bin]]
+name = "train-cartpole-aac"
+path = "train-cartpole-aac.rs"
+
 [dependencies]
 bit-set = "*"
 rand = "*"

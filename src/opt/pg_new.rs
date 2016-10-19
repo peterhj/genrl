@@ -88,6 +88,7 @@ pub struct BasePolicyGrad<E, V, Policy> where E: 'static + Env, V: Value<Res=E::
   pub ep_k_offsets: Vec<usize>,
   pub ep_is_term:   Vec<bool>,
   pub step_values:  Vec<Vec<f32>>,
+  pub impute_avals: Vec<Vec<f32>>,
   pub impute_vals:  Vec<Vec<f32>>,
   pub final_values: Vec<Option<f32>>,
   _marker:  PhantomData<(E, V, Policy)>,
@@ -117,6 +118,10 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     for _ in 0 .. minibatch_sz {
       step_values.push(vec![]);
     }
+    let mut impute_avals = Vec::with_capacity(minibatch_sz);
+    for _ in 0 .. minibatch_sz {
+      impute_avals.push(vec![]);
+    }
     let mut impute_vals = Vec::with_capacity(minibatch_sz);
     for _ in 0 .. minibatch_sz {
       impute_vals.push(vec![]);
@@ -134,6 +139,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       ep_k_offsets: ep_k_offsets,
       ep_is_term:   ep_is_term,
       step_values:  step_values,
+      impute_avals: impute_avals,
       impute_vals:  impute_vals,
       final_values: final_values,
       _marker:      PhantomData,
@@ -143,13 +149,13 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   pub fn sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut Policy, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
-      if episode.terminated() || episode.horizon() >= self.max_horizon {
+      if self.ep_is_term[idx] || episode.terminated() || episode.horizon() >= self.max_horizon {
         episode.reset(init_cfg, rng);
+        assert_eq!(0, episode.horizon());
       }
       self.ep_k_offsets[idx] = episode.horizon();
       self.ep_is_term[idx] = false;
     }
-
     let mut step = 0;
     loop {
       let mut term_count = 0;
@@ -163,16 +169,20 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         }
         let k = self.ep_k_offsets[idx] + step;
         assert_eq!(k, episode.horizon());
+        let mut item = SampleItem::new();
         let prev_env = match k {
           0 => episode.init_env.clone(),
           k => episode.steps[k-1].next_env.clone(),
         };
-        let mut item = SampleItem::new();
         let env_repr_dim = prev_env._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
         item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         self.cache.push(item);
         self.cache_idxs.push(idx);
+      }
+      if term_count >= self.episodes.len() {
+        assert_eq!(term_count, self.episodes.len());
+        break;
       }
       // FIXME(20161018): this computes the _minibatch_, but we may want to use
       // a smaller _batch_ here just like during the policy gradient.
@@ -211,9 +221,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       }
       assert_eq!(cache_rank, self.cache.len());
       step += 1;
-      if term_count == self.episodes.len() {
-        break;
-      } else if let Some(max_num_steps) = max_num_steps {
+      if let Some(max_num_steps) = max_num_steps {
         if step >= max_num_steps {
           break;
         }
@@ -225,13 +233,15 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   }
 
   pub fn fill_step_values(&mut self, value_cfg: &V::Cfg) {
-    for (idx, episode) in self.episodes.iter_mut().enumerate() {
-      let mut suffix_val = if let Some(final_val) = self.final_values[idx] {
+    for (idx, episode) in self.episodes.iter().enumerate() {
+      let mut suffix_val: Option<V> = None;
+      let mut impute_suffix_val = if let Some(final_val) = self.final_values[idx] {
         Some(<V as Value>::from_scalar(final_val, *value_cfg))
       } else {
         None
       };
       self.step_values[idx].resize(episode.horizon(), 0.0);
+      self.impute_avals[idx].resize(episode.horizon(), 0.0);
       for k in (self.ep_k_offsets[idx] .. episode.horizon()).rev() {
         if let Some(res) = episode.steps[k].res {
           if let Some(ref mut suffix_val) = suffix_val {
@@ -239,22 +249,79 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
           } else {
             suffix_val = Some(<V as Value>::from_res(res, *value_cfg));
           }
+          if let Some(ref mut impute_suffix_val) = impute_suffix_val {
+            impute_suffix_val.lreduce(res);
+          } else {
+            impute_suffix_val = Some(<V as Value>::from_res(res, *value_cfg));
+          }
         }
         if let Some(suffix_val) = suffix_val {
           self.step_values[idx][k] = suffix_val.to_scalar();
         } else {
           self.step_values[idx][k] = 0.0;
         }
+        if let Some(impute_suffix_val) = impute_suffix_val {
+          self.impute_avals[idx][k] = impute_suffix_val.to_scalar();
+        } else {
+          self.impute_avals[idx][k] = 0.0;
+        }
       }
     }
   }
 
-  pub fn impute_step_values<ValueFn>(&mut self, value_op: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
-    // FIXME(20161019)
-    unimplemented!();
+  pub fn impute_step_values<ValueFn>(&mut self, max_num_steps: Option<usize>, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+    for (idx, episode) in self.episodes.iter().enumerate() {
+      self.impute_vals[idx].resize(episode.horizon(), 0.0);
+    }
+    let mut step = 0;
+    loop {
+      let mut term_count = 0;
+      self.cache.clear();
+      self.cache_idxs.clear();
+      for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        let k = self.ep_k_offsets[idx] + step;
+        if k >= episode.horizon() {
+          term_count += 1;
+          continue;
+        }
+        let mut item = SampleItem::new();
+        let prev_env = match k {
+          0 => episode.init_env.clone(),
+          k => episode.steps[k-1].next_env.clone(),
+        };
+        let env_repr_dim = prev_env._shape3d();
+        item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
+        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+        self.cache.push(item);
+        self.cache_idxs.push(idx);
+      }
+      if term_count >= self.episodes.len() {
+        assert_eq!(term_count, self.episodes.len());
+        break;
+      }
+      value_fn.load_batch(&self.cache);
+      value_fn.forward(OpPhase::Learning);
+      let mut cache_rank = 0;
+      for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        if idx != self.cache_idxs[cache_rank] {
+          continue;
+        }
+        let output = value_fn._get_pred();
+        let k = self.ep_k_offsets[idx] + step;
+        self.impute_vals[idx][k] = output[cache_rank];
+        cache_rank += 1;
+      }
+      assert_eq!(cache_rank, self.cache.len());
+      step += 1;
+      if let Some(max_num_steps) = max_num_steps {
+        if step >= max_num_steps {
+          break;
+        }
+      }
+    }
   }
 
-  pub fn impute_final_values<ValueFn>(&mut self, value_op: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+  pub fn impute_final_values<ValueFn>(&mut self, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
     self.cache.clear();
     self.cache_idxs.clear();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
@@ -273,9 +340,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       self.cache.push(item);
       self.cache_idxs.push(idx);
     }
-    value_op.load_batch(&self.cache);
-    value_op.forward(OpPhase::Learning);
-    let output = value_op._get_pred();
+    value_fn.load_batch(&self.cache);
+    value_fn.forward(OpPhase::Learning);
+    let output = value_fn._get_pred();
     let mut cache_rank = 0;
     for (idx, _) in self.episodes.iter().enumerate() {
       if idx != self.cache_idxs[cache_rank] {

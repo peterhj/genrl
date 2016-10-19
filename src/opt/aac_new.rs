@@ -23,7 +23,6 @@ pub struct SgdAdvActorCriticConfig<E, V> where E: 'static + Env, V: Value<Res=E:
   pub v_step_size:  f32,
   pub max_horizon:  usize,
   pub update_steps: Option<usize>,
-  //pub baseline:     f32,
   pub init_cfg:     E::Init,
   pub value_cfg:    V::Cfg,
 }
@@ -38,6 +37,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   cfg:      SgdAdvActorCriticConfig<E, V>,
   grad_sz:  usize,
   vgrad_sz: usize,
+  iter_counter: usize,
   rng:      Xorshiftplus128Rng,
   base_pg:  BasePolicyGrad<E, V, Policy>,
   policy:   Rc<RefCell<Policy>>,
@@ -70,14 +70,15 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     param.resize(pgrad_sz, 0.0);
     let mut grad = Vec::with_capacity(pgrad_sz);
     grad.resize(pgrad_sz, 0.0);
-    let mut vparam = Vec::with_capacity(pgrad_sz);
+    let mut vparam = Vec::with_capacity(vgrad_sz);
     vparam.resize(vgrad_sz, 0.0);
-    let mut vgrad = Vec::with_capacity(pgrad_sz);
+    let mut vgrad = Vec::with_capacity(vgrad_sz);
     vgrad.resize(vgrad_sz, 0.0);
     SgdAdvActorCriticWorker{
       cfg:      cfg,
       grad_sz:  pgrad_sz,
       vgrad_sz: vgrad_sz,
+      iter_counter: 0,
       rng:      rng,
       base_pg:  base_pg,
       policy:   policy,
@@ -95,21 +96,26 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let mut policy = self.policy.borrow_mut();
     policy.init_param(rng);
     policy.store_diff_param(&mut self.param);
-    //println!("DEBUG: param: {:?}", self.param);
+    let mut value_fn = self.value_fn.borrow_mut();
+    value_fn.init_param(rng);
+    value_fn.store_diff_param(&mut self.vparam);
   }
 
   pub fn update(&mut self) -> f32 {
     let mut policy = self.policy.borrow_mut();
     let mut value_fn = self.value_fn.borrow_mut();
     self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
-    self.base_pg.impute_step_values(&mut *value_fn);
+    self.base_pg.impute_step_values(self.cfg.update_steps, &mut *value_fn);
     self.base_pg.impute_final_values(&mut *value_fn);
     self.base_pg.fill_step_values(&self.cfg.value_cfg);
     policy.reset_loss();
     policy.reset_grad();
     policy.next_iteration();
+    value_fn.reset_loss();
+    value_fn.reset_grad();
+    value_fn.next_iteration();
     self.cache.clear();
-    //print!("DEBUG: weights: ");
+    self.vcache.clear();
     for (idx, episode) in self.base_pg.episodes.iter().enumerate() {
       for k in self.base_pg.ep_k_offsets[idx] .. episode.horizon() {
         let mut policy_item = SampleItem::new();
@@ -119,7 +125,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
           k => episode.steps[k-1].next_env.clone(),
         };
         let env_repr_dim = env._shape3d();
-        let action_value = self.base_pg.step_values[idx][k];
+        //let action_value = self.base_pg.step_values[idx][k];
+        let action_value = self.base_pg.impute_avals[idx][k];
         let imputed_act_value = self.base_pg.impute_vals[idx][k];
         policy_item.kvs.insert::<SampleExtractInputKey<[f32]>>(env.clone());
         policy_item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
@@ -144,7 +151,6 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.vcache.clear();
       }
     }
-    //println!("");
     if !self.cache.is_empty() {
       policy.load_batch(&self.cache);
       policy.forward(OpPhase::Learning);
@@ -157,6 +163,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
     // FIXME(20161018): only normalize by minibatch size if all episodes in the
     // minibatch are represented in the policy gradient.
+    policy.update_nondiff_param(self.iter_counter);
+    value_fn.update_nondiff_param(self.iter_counter);
     policy.store_grad(&mut self.grad);
     self.grad.reshape_mut(self.grad_sz).scale(1.0 / self.cfg.minibatch_sz as f32);
     self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.grad.reshape(self.grad_sz));
@@ -167,6 +175,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.vgrad.reshape_mut(self.vgrad_sz).scale(1.0 / self.cfg.minibatch_sz as f32);
     self.vparam.reshape_mut(self.vgrad_sz).add(-self.cfg.v_step_size, self.vgrad.reshape(self.vgrad_sz));
     value_fn.load_diff_param(&mut self.vparam);
+    self.iter_counter += 1;
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
       avg_value += self.base_pg.step_values[idx][self.base_pg.ep_k_offsets[idx]];
