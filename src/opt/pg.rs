@@ -398,7 +398,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
   fn init_param(&mut self, rng: &mut Self::Rng) {
     self.operator.init_param(rng);
     self.operator.store_param(&mut self.param, 0);
-    println!("DEBUG: param: {:?}", self.param);
+    //println!("DEBUG: param: {:?}", self.param);
   }
 
   /*fn load_local_param(&mut self, param_reader: &mut ReadBuffer<f32>) { unimplemented!(); }
@@ -444,7 +444,7 @@ where E: Env + EnvRepr<f32> + Clone, //EnvConvert<E>,
     self.operator.accumulate_grad(-self.cfg.step_size, 0.0, &mut self.grad_acc, 0);
     self.operator.update_param(1.0, 1.0, &mut self.grad_acc, 0);
     self.operator.store_param(&mut self.param, 0);
-    println!("DEBUG: param: {:?}", self.param);
+    //println!("DEBUG: param: {:?}", self.param);
   }
 
   fn eval(&mut self, epoch_size: usize, samples: &mut Iterator<Item=Episode<E>>) {

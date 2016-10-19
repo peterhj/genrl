@@ -78,18 +78,18 @@ pub trait StochasticPolicy {
 }
 
 pub struct BasePolicyGrad<E, V, PolicyOp> where E: 'static + Env, V: Value<Res=E::Response> {
-  batch_sz:     usize,
-  minibatch_sz: usize,
-  max_horizon:  usize,
-  cache:        Vec<SampleItem>,
-  cache_idxs:   Vec<usize>,
-  act_dist:     DiscreteDist32,
-  episodes:     Vec<Episode<E>>,
-  ep_k_offsets: Vec<usize>,
-  ep_is_term:   Vec<bool>,
-  step_values:  Vec<Vec<f32>>,
-  final_values: Vec<Option<f32>>,
-  _marker:      PhantomData<(E, V, PolicyOp)>,
+  pub batch_sz:     usize,
+  pub minibatch_sz: usize,
+  pub max_horizon:  usize,
+  pub cache:        Vec<SampleItem>,
+  pub cache_idxs:   Vec<usize>,
+  pub act_dist:     DiscreteDist32,
+  pub episodes:     Vec<Episode<E>>,
+  pub ep_k_offsets: Vec<usize>,
+  pub ep_is_term:   Vec<bool>,
+  pub step_values:  Vec<Vec<f32>>,
+  pub final_values: Vec<Option<f32>>,
+  _marker:  PhantomData<(E, V, PolicyOp)>,
 }
 
 impl<E, V, PolicyOp> BasePolicyGrad<E, V, PolicyOp>
@@ -119,7 +119,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let mut final_values = Vec::with_capacity(minibatch_sz);
     final_values.resize(minibatch_sz, None);
     BasePolicyGrad{
-      batch_sz:     1,
+      batch_sz:     minibatch_sz, // FIXME(20161018): a hack.
       minibatch_sz: minibatch_sz,
       max_horizon:  max_horizon,
       cache:        cache,
@@ -134,7 +134,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn batch_sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, value_cfg: &V::Cfg, policy: &mut PolicyOp, /*value: Option<&mut ValueOp>,*/ rng: &mut R) where R: Rng {
+  pub fn sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut PolicyOp, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
       if episode.terminated() || episode.horizon() >= self.max_horizon {
@@ -213,21 +213,13 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         }
       }
     }
+    for (idx, _) in self.episodes.iter().enumerate() {
+      self.final_values[idx] = None;
+    }
+  }
 
+  pub fn fill_values(&mut self, value_cfg: &V::Cfg) {
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
-      if !episode.terminated() {
-        if false /*let Some(ref mut value_op) = value*/ {
-          let impute_val = 0.0; // FIXME: get from the value op.
-          /*value_op.load_batch(&cache);
-          value_op.forward(OpPhase::Learning);
-          let impute_val = value_op.get_output().borrow()[0];*/
-          self.final_values[idx] = Some(impute_val);
-        } else {
-          self.final_values[idx] = None;
-        }
-      } else {
-        self.final_values[idx] = None;
-      }
       let mut suffix_val = if let Some(final_val) = self.final_values[idx] {
         Some(<V as Value>::from_scalar(final_val, *value_cfg))
       } else {
@@ -247,16 +239,40 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         } else {
           self.step_values[idx][k] = 0.0;
         }
-        /*if idx == 0 {
-          if k == episode.horizon()-1 {
-            print!("DEBUG: step values: ");
-          }
-          print!("{:?} ", (self.step_values[idx][k], episode.steps[k].res));
-          if k == self.ep_k_offsets[idx] {
-            println!("");
-          }
-        }*/
       }
+    }
+  }
+
+  pub fn impute_final_values<ValueOp>(&mut self, value_op: &mut ValueOp) where ValueOp: DiffLoss<SampleItem, IoBuf=[f32]> {
+    self.cache.clear();
+    self.cache_idxs.clear();
+    for (idx, episode) in self.episodes.iter_mut().enumerate() {
+      if self.ep_is_term[idx] || episode.terminated() {
+        continue;
+      }
+      let k = episode.horizon();
+      let prev_env = match k {
+        0 => episode.init_env.clone(),
+        k => episode.steps[k-1].next_env.clone(),
+      };
+      let mut item = SampleItem::new();
+      let env_repr_dim = prev_env._shape3d();
+      item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
+      item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+      self.cache.push(item);
+      self.cache_idxs.push(idx);
+    }
+    value_op.load_batch(&self.cache);
+    value_op.forward(OpPhase::Learning);
+    let output = value_op._get_pred();
+    let mut cache_rank = 0;
+    for (idx, _) in self.episodes.iter().enumerate() {
+      if idx != self.cache_idxs[cache_rank] {
+        continue;
+      }
+      let impute_val = output[cache_rank];
+      self.final_values[idx] = Some(impute_val);
+      cache_rank += 1;
     }
   }
 }
@@ -328,7 +344,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn update(&mut self) -> f32 {
     let mut operator = self.operator.borrow_mut();
-    self.base_pg.batch_sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &self.cfg.value_cfg, &mut operator, &mut self.rng);
+    self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut operator, &mut self.rng);
+    self.base_pg.fill_values(&self.cfg.value_cfg);
     operator.reset_loss();
     operator.reset_grad();
     operator.next_iteration();
