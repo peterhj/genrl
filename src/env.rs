@@ -145,26 +145,29 @@ pub trait Value: Copy + Debug {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct DiscountedValue<T> {
+pub struct Discount<T>(pub T) where T: Copy;
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiscountedValue<T> where T: Copy {
   pub value:    T,
   pub discount: T,
 }
 
 impl Value for DiscountedValue<f32> {
-  type Cfg = f32;
+  type Cfg = Discount<f32>;
   type Res = f32;
 
-  fn from_res(res: f32, cfg: f32) -> DiscountedValue<f32> {
+  fn from_res(res: f32, cfg: Discount<f32>) -> DiscountedValue<f32> {
     DiscountedValue{
       value:    res,
-      discount: cfg,
+      discount: cfg.0,
     }
   }
 
-  fn from_scalar(scalar_value: f32, cfg: f32) -> DiscountedValue<f32> {
+  fn from_scalar(scalar_value: f32, cfg: Discount<f32>) -> DiscountedValue<f32> {
     DiscountedValue{
       value:    scalar_value,
-      discount: cfg,
+      discount: cfg.0,
     }
   }
 

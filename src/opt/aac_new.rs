@@ -116,6 +116,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     value_fn.next_iteration();
     self.cache.clear();
     self.vcache.clear();
+    let mut steps_count = 0;
+    let mut tmp_baselines = vec![];
     for (idx, episode) in self.base_pg.episodes.iter().enumerate() {
       for k in self.base_pg.ep_k_offsets[idx] .. episode.horizon() {
         let mut policy_item = SampleItem::new();
@@ -125,18 +127,23 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
           k => episode.steps[k-1].next_env.clone(),
         };
         let env_repr_dim = env._shape3d();
-        //let action_value = self.base_pg.step_values[idx][k];
-        let action_value = self.base_pg.impute_avals[idx][k];
-        let imputed_act_value = self.base_pg.impute_vals[idx][k];
+        let action_value = self.base_pg.eval_actvals[idx][k];
+        let smoothed_action_value = self.base_pg.smooth_avals[idx][k];
+        let baseline_value = self.base_pg.baseline_val[idx][k];
+        if k == 0 {
+          tmp_baselines.push(baseline_value);
+        }
         policy_item.kvs.insert::<SampleExtractInputKey<[f32]>>(env.clone());
         policy_item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         policy_item.kvs.insert::<SampleClassLabelKey>(episode.steps[k].action.idx());
-        policy_item.kvs.insert::<SampleWeightKey>(action_value - imputed_act_value);
+        policy_item.kvs.insert::<SampleWeightKey>(action_value - baseline_value);
+        //policy_item.kvs.insert::<SampleWeightKey>(smoothed_action_value - baseline_value);
         value_fn_item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
         value_fn_item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         value_fn_item.kvs.insert::<SampleRegressTargetKey>(action_value);
         self.cache.push(policy_item);
         self.vcache.push(value_fn_item);
+        steps_count += 1;
         assert_eq!(self.cache.len(), self.vcache.len());
         if self.cache.len() < self.cfg.batch_sz {
           continue;
@@ -151,7 +158,10 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.vcache.clear();
       }
     }
+    //println!("DEBUG: baselines[0]: {:?}", &tmp_baselines);
+    //println!("DEBUG: baselines[H]: {:?}", &self.base_pg.final_values);
     if !self.cache.is_empty() {
+      assert!(!self.vcache.is_empty());
       policy.load_batch(&self.cache);
       policy.forward(OpPhase::Learning);
       policy.backward();
@@ -172,13 +182,13 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     // FIXME(20161018): only normalize by minibatch size if all episodes in the
     // minibatch are represented in the policy gradient.
     value_fn.store_grad(&mut self.vgrad);
-    self.vgrad.reshape_mut(self.vgrad_sz).scale(1.0 / self.cfg.minibatch_sz as f32);
+    self.vgrad.reshape_mut(self.vgrad_sz).scale(1.0 / steps_count as f32);
     self.vparam.reshape_mut(self.vgrad_sz).add(-self.cfg.v_step_size, self.vgrad.reshape(self.vgrad_sz));
     value_fn.load_diff_param(&mut self.vparam);
     self.iter_counter += 1;
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
-      avg_value += self.base_pg.step_values[idx][self.base_pg.ep_k_offsets[idx]];
+      avg_value += self.base_pg.eval_actvals[idx][self.base_pg.ep_k_offsets[idx]];
     }
     avg_value /= self.cfg.minibatch_sz as f32;
     avg_value

@@ -87,9 +87,9 @@ pub struct BasePolicyGrad<E, V, Policy> where E: 'static + Env, V: Value<Res=E::
   pub episodes:     Vec<Episode<E>>,
   pub ep_k_offsets: Vec<usize>,
   pub ep_is_term:   Vec<bool>,
-  pub step_values:  Vec<Vec<f32>>,
-  pub impute_avals: Vec<Vec<f32>>,
-  pub impute_vals:  Vec<Vec<f32>>,
+  pub eval_actvals: Vec<Vec<f32>>,
+  pub smooth_avals: Vec<Vec<f32>>,
+  pub baseline_val: Vec<Vec<f32>>,
   pub final_values: Vec<Option<f32>>,
   _marker:  PhantomData<(E, V, Policy)>,
 }
@@ -114,17 +114,17 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     ep_k_offsets.resize(minibatch_sz, 0);
     let mut ep_is_term = Vec::with_capacity(minibatch_sz);
     ep_is_term.resize(minibatch_sz, false);
-    let mut step_values = Vec::with_capacity(minibatch_sz);
+    let mut eval_actvals = Vec::with_capacity(minibatch_sz);
     for _ in 0 .. minibatch_sz {
-      step_values.push(vec![]);
+      eval_actvals.push(vec![]);
     }
-    let mut impute_avals = Vec::with_capacity(minibatch_sz);
+    let mut smooth_avals = Vec::with_capacity(minibatch_sz);
     for _ in 0 .. minibatch_sz {
-      impute_avals.push(vec![]);
+      smooth_avals.push(vec![]);
     }
-    let mut impute_vals = Vec::with_capacity(minibatch_sz);
+    let mut baseline_val = Vec::with_capacity(minibatch_sz);
     for _ in 0 .. minibatch_sz {
-      impute_vals.push(vec![]);
+      baseline_val.push(vec![]);
     }
     let mut final_values = Vec::with_capacity(minibatch_sz);
     final_values.resize(minibatch_sz, None);
@@ -138,9 +138,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       episodes:     episodes,
       ep_k_offsets: ep_k_offsets,
       ep_is_term:   ep_is_term,
-      step_values:  step_values,
-      impute_avals: impute_avals,
-      impute_vals:  impute_vals,
+      eval_actvals: eval_actvals,
+      smooth_avals: smooth_avals,
+      baseline_val: baseline_val,
       final_values: final_values,
       _marker:      PhantomData,
     }
@@ -235,13 +235,13 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   pub fn fill_step_values(&mut self, value_cfg: &V::Cfg) {
     for (idx, episode) in self.episodes.iter().enumerate() {
       let mut suffix_val: Option<V> = None;
-      let mut impute_suffix_val = if let Some(final_val) = self.final_values[idx] {
+      let mut smooth_suffix_val = if let Some(final_val) = self.final_values[idx] {
         Some(<V as Value>::from_scalar(final_val, *value_cfg))
       } else {
         None
       };
-      self.step_values[idx].resize(episode.horizon(), 0.0);
-      self.impute_avals[idx].resize(episode.horizon(), 0.0);
+      self.eval_actvals[idx].resize(episode.horizon(), 0.0);
+      self.smooth_avals[idx].resize(episode.horizon(), 0.0);
       for k in (self.ep_k_offsets[idx] .. episode.horizon()).rev() {
         if let Some(res) = episode.steps[k].res {
           if let Some(ref mut suffix_val) = suffix_val {
@@ -249,21 +249,21 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
           } else {
             suffix_val = Some(<V as Value>::from_res(res, *value_cfg));
           }
-          if let Some(ref mut impute_suffix_val) = impute_suffix_val {
-            impute_suffix_val.lreduce(res);
+          if let Some(ref mut smooth_suffix_val) = smooth_suffix_val {
+            smooth_suffix_val.lreduce(res);
           } else {
-            impute_suffix_val = Some(<V as Value>::from_res(res, *value_cfg));
+            smooth_suffix_val = Some(<V as Value>::from_res(res, *value_cfg));
           }
         }
         if let Some(suffix_val) = suffix_val {
-          self.step_values[idx][k] = suffix_val.to_scalar();
+          self.eval_actvals[idx][k] = suffix_val.to_scalar();
         } else {
-          self.step_values[idx][k] = 0.0;
+          self.eval_actvals[idx][k] = 0.0;
         }
-        if let Some(impute_suffix_val) = impute_suffix_val {
-          self.impute_avals[idx][k] = impute_suffix_val.to_scalar();
+        if let Some(smooth_suffix_val) = smooth_suffix_val {
+          self.smooth_avals[idx][k] = smooth_suffix_val.to_scalar();
         } else {
-          self.impute_avals[idx][k] = 0.0;
+          self.smooth_avals[idx][k] = 0.0;
         }
       }
     }
@@ -271,7 +271,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn impute_step_values<ValueFn>(&mut self, max_num_steps: Option<usize>, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
     for (idx, episode) in self.episodes.iter().enumerate() {
-      self.impute_vals[idx].resize(episode.horizon(), 0.0);
+      self.baseline_val[idx].resize(episode.horizon(), 0.0);
     }
     let mut step = 0;
     loop {
@@ -308,7 +308,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         }
         let output = value_fn._get_pred();
         let k = self.ep_k_offsets[idx] + step;
-        self.impute_vals[idx][k] = output[cache_rank];
+        self.baseline_val[idx][k] = output[cache_rank];
         cache_rank += 1;
       }
       assert_eq!(cache_rank, self.cache.len());
@@ -375,6 +375,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 {
   cfg:      PolicyGradConfig<E, V>,
   grad_sz:  usize,
+  iter_counter: usize,
   rng:      Xorshiftplus128Rng,
   base_pg:  BasePolicyGrad<E, V, Policy>,
   policy:   Rc<RefCell<Policy>>,
@@ -404,6 +405,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     SgdPolicyGradWorker{
       cfg:      cfg,
       grad_sz:  grad_sz,
+      iter_counter: 0,
       rng:      rng,
       base_pg:  base_pg,
       policy:   policy,
@@ -440,7 +442,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
         item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         item.kvs.insert::<SampleClassLabelKey>(episode.steps[k].action.idx());
-        item.kvs.insert::<SampleWeightKey>(self.base_pg.step_values[idx][k] - self.cfg.baseline);
+        item.kvs.insert::<SampleWeightKey>(self.base_pg.eval_actvals[idx][k] - self.cfg.baseline);
         self.cache.push(item);
         if self.cache.len() < self.cfg.batch_sz {
           continue;
@@ -458,6 +460,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       policy.backward();
       self.cache.clear();
     }
+    policy.update_nondiff_param(self.iter_counter);
     policy.store_grad(&mut self.grad);
     //println!("DEBUG: grad:  {:?}", self.grad);
     // FIXME(20161018): only normalize by minibatch size if all episodes in the
@@ -466,9 +469,10 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.grad.reshape(self.grad_sz));
     policy.load_diff_param(&mut self.param);
     //println!("DEBUG: param: {:?}", self.param);
+    self.iter_counter += 1;
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
-      avg_value += self.base_pg.step_values[idx][self.base_pg.ep_k_offsets[idx]];
+      avg_value += self.base_pg.eval_actvals[idx][self.base_pg.ep_k_offsets[idx]];
     }
     avg_value /= self.cfg.minibatch_sz as f32;
     avg_value

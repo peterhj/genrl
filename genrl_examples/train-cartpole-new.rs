@@ -7,7 +7,7 @@ extern crate rand;
 
 //use genrl::examples::bandit::{BanditConfig, BanditEnv};
 use genrl::examples::cartpole::{CartpoleConfig, CartpoleEnv};
-use genrl::env::{DiscountedValue, Episode};
+use genrl::env::{Discount, DiscountedValue, Episode};
 //use genrl::opt::pg::{PolicyGradConfig, PolicyGradWorker};
 use genrl::opt::pg_new::{PolicyGradConfig, SgdPolicyGradWorker};
 //use genrl::wrappers::{DiscountedWrapConfig, DiscountedWrapEnv};
@@ -57,7 +57,7 @@ fn main() {
     update_steps:   Some(max_horizon),
     baseline:       0.0,
     init_cfg:       init_cfg,
-    value_cfg:      0.99,
+    value_cfg:      Discount(0.99),
   };
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
   let mut policy_grad: SgdPolicyGradWorker<CartpoleEnv, DiscountedValue<f32>, _> = SgdPolicyGradWorker::new(pg_cfg, loss);
