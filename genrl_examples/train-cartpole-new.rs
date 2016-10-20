@@ -22,10 +22,9 @@ use rand::{thread_rng};
 
 fn main() {
   let mut init_cfg = CartpoleConfig::default();
-  init_cfg.horizon = 300;
   let batch_sz = 32;
   let minibatch_sz = 32;
-  let max_horizon = init_cfg.horizon;
+  let max_horizon = 300;
   let max_iter = 10000;
 
   let input = NewVarInputOperator::new(VarInputOperatorConfig{

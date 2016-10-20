@@ -20,10 +20,10 @@ use rand::{thread_rng};
 
 fn main() {
   let mut init_cfg = CartpoleConfig::default();
-  init_cfg.horizon = 300;
+  //init_cfg.horizon = 300;
   let batch_sz = 32;
   let minibatch_sz = 32;
-  let max_horizon = init_cfg.horizon;
+  let max_horizon = 300;
   let max_iter = 10000;
 
   let input = NewVarInputOperator::new(VarInputOperatorConfig{
@@ -87,10 +87,10 @@ fn main() {
   let pg_cfg = SgdAdvActorCriticConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
-    step_size:      0.01,
+    step_size:      0.1,
     v_step_size:    0.01,
     max_horizon:    max_horizon,
-    update_steps:   Some(max_horizon),
+    update_steps:   Some(100),
     init_cfg:       init_cfg,
     value_cfg:      Discount(0.99),
   };

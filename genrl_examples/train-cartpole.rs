@@ -18,14 +18,14 @@ use rand::{thread_rng};
 
 fn main() {
   let mut init_cfg = CartpoleConfig::default();
-  init_cfg.horizon = 300;
+  //init_cfg.horizon = 300;
   let wrap_init_cfg = DiscountedWrapConfig{
     discount:   0.99,
     env_init:   init_cfg,
   };
   let batch_sz = 32;
   let minibatch_sz = 32;
-  let max_horizon = init_cfg.horizon;
+  let max_horizon = 300;
   let max_iter = 1000;
 
   let mut op_cfg = vec![];

@@ -60,7 +60,7 @@ pub struct CartpoleConfig {
   pub time_delta:   f32,
   pub x_thresh:     f32,
   pub theta_thresh: f32,
-  pub horizon:      usize,
+  //pub horizon:      usize,
   //pub discount:     f32,
 }
 
@@ -75,7 +75,7 @@ impl Default for CartpoleConfig {
       time_delta:     0.02,
       x_thresh:       2.4,
       theta_thresh:   (12.0 / 360.0) * 2.0 * PI,
-      horizon:        100,
+      //horizon:        100,
       //discount:       0.99,
     }
   }
@@ -119,8 +119,11 @@ impl Env for CartpoleEnv {
   }
 
   fn is_terminal(&self) -> bool {
-    //self.state.terminated || self.state.x.abs() > self.cfg.x_thresh || self.state.theta.abs() > self.cfg.theta_thresh
-    false
+    let cfg = self.cfg.get();
+    let state = self.state.borrow();
+    //state.terminated || state.x.abs() > cfg.x_thresh || state.theta.abs() > cfg.theta_thresh
+    state.terminated
+    //false
   }
 
   fn is_legal_action(&self, action: &CartpoleAction) -> bool {

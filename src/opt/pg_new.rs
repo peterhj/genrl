@@ -184,12 +184,17 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         assert_eq!(term_count, self.episodes.len());
         break;
       }
+      assert!(!self.cache.is_empty());
+      assert_eq!(self.cache.len(), self.cache_idxs.len());
       // FIXME(20161018): this computes the _minibatch_, but we may want to use
       // a smaller _batch_ here just like during the policy gradient.
       policy.load_batch(&self.cache);
       policy.forward(OpPhase::Learning);
       let mut cache_rank = 0;
       for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        if cache_rank >= self.cache_idxs.len() {
+          break;
+        }
         if idx != self.cache_idxs[cache_rank] {
           continue;
         }
@@ -303,6 +308,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       value_fn.forward(OpPhase::Learning);
       let mut cache_rank = 0;
       for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        if cache_rank >= self.cache_idxs.len() {
+          break;
+        }
         if idx != self.cache_idxs[cache_rank] {
           continue;
         }
@@ -345,6 +353,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let output = value_fn._get_pred();
     let mut cache_rank = 0;
     for (idx, _) in self.episodes.iter().enumerate() {
+      if cache_rank >= self.cache_idxs.len() {
+        break;
+      }
       if idx != self.cache_idxs[cache_rank] {
         continue;
       }
