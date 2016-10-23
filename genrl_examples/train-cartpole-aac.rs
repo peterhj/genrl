@@ -6,7 +6,7 @@ extern crate rng;
 extern crate rand;
 
 use genrl::examples::cartpole::{CartpoleConfig, CartpoleEnv};
-use genrl::env::{Discount, DiscountedValue, Episode};
+use genrl::env::{SumValue, Discount, DiscountedValue, Episode};
 use genrl::opt::aac_new::{SgdAdvActorCriticConfig, SgdAdvActorCriticWorker};
 use genrl::opt::pg_new::{PolicyGradConfig, SgdPolicyGradWorker};
 use neuralops::prelude::*;
@@ -93,9 +93,10 @@ fn main() {
     update_steps:   Some(100),
     init_cfg:       init_cfg,
     value_cfg:      Discount(0.99),
+    eval_vcfg:      (),
   };
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-  let mut policy_grad: SgdAdvActorCriticWorker<CartpoleEnv, DiscountedValue<f32>, _, _> = SgdAdvActorCriticWorker::new(pg_cfg, loss, v_loss);
+  let mut policy_grad: SgdAdvActorCriticWorker<CartpoleEnv, DiscountedValue<f32>, SumValue<f32>, _, _> = SgdAdvActorCriticWorker::new(pg_cfg, loss, v_loss);
   policy_grad.init_param(&mut rng);
   for iter_nr in 0 .. max_iter {
     let avg_value = policy_grad.update();

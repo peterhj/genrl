@@ -16,7 +16,7 @@ use std::ops::{Deref};
 use std::rc::{Rc};
 
 #[derive(Clone, Copy, Debug)]
-pub struct SgdAdvActorCriticConfig<E, V> where E: 'static + Env, V: Value<Res=E::Response> {
+pub struct SgdAdvActorCriticConfig<E, V, EvalV> where E: 'static + Env, V: Value<Res=E::Response>, EvalV: Value<Res=E::Response> {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
   pub step_size:    f32,
@@ -25,21 +25,24 @@ pub struct SgdAdvActorCriticConfig<E, V> where E: 'static + Env, V: Value<Res=E:
   pub update_steps: Option<usize>,
   pub init_cfg:     E::Init,
   pub value_cfg:    V::Cfg,
+  pub eval_vcfg:    EvalV::Cfg,
 }
 
-pub struct SgdAdvActorCriticWorker<E, V, Policy, ValueFn>
+pub struct SgdAdvActorCriticWorker<E, V, EvalV, Policy, ValueFn>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
+      EvalV: Value<Res=E::Response>,
       Policy: DiffLoss<SampleItem, IoBuf=[f32]>,
       ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
 {
-  cfg:      SgdAdvActorCriticConfig<E, V>,
+  cfg:      SgdAdvActorCriticConfig<E, V, EvalV>,
   grad_sz:  usize,
   vgrad_sz: usize,
   iter_counter: usize,
   rng:      Xorshiftplus128Rng,
   base_pg:  BasePolicyGrad<E, V, Policy>,
+  eval_pg:  BasePolicyGrad<E, EvalV, Policy>,
   policy:   Rc<RefCell<Policy>>,
   value_fn: Rc<RefCell<ValueFn>>,
   cache:    Vec<SampleItem>,
@@ -50,19 +53,21 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   vgrad:    Vec<f32>,
 }
 
-impl<E, V, Policy, ValueFn> SgdAdvActorCriticWorker<E, V, Policy, ValueFn>
+impl<E, V, EvalV, Policy, ValueFn> SgdAdvActorCriticWorker<E, V, EvalV, Policy, ValueFn>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
+      EvalV: Value<Res=E::Response>,
       Policy: DiffLoss<SampleItem, IoBuf=[f32]>,
       ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
 {
-  pub fn new(cfg: SgdAdvActorCriticConfig<E, V>, policy: Rc<RefCell<Policy>>, value_fn: Rc<RefCell<ValueFn>>) -> SgdAdvActorCriticWorker<E, V, Policy, ValueFn> {
+  pub fn new(cfg: SgdAdvActorCriticConfig<E, V, EvalV>, policy: Rc<RefCell<Policy>>, value_fn: Rc<RefCell<ValueFn>>) -> SgdAdvActorCriticWorker<E, V, EvalV, Policy, ValueFn> {
     let batch_sz = cfg.batch_sz;
     let minibatch_sz = cfg.minibatch_sz;
     let max_horizon = cfg.max_horizon;
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
     let base_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
+    let eval_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
     let pgrad_sz = policy.borrow_mut().diff_param_sz();
     let vgrad_sz = value_fn.borrow_mut().diff_param_sz();
     //println!("DEBUG: grad sz: {}", grad_sz);
@@ -81,6 +86,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       iter_counter: 0,
       rng:      rng,
       base_pg:  base_pg,
+      eval_pg:  eval_pg,
       policy:   policy,
       value_fn: value_fn,
       cache:    Vec::with_capacity(batch_sz),
