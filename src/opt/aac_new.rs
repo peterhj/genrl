@@ -133,7 +133,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
           k => episode.steps[k-1].next_env.clone(),
         };
         let env_repr_dim = env._shape3d();
-        let action_value = self.base_pg.eval_actvals[idx][k];
+        let action_value = self.base_pg.raw_actvals[idx][k];
         let smoothed_action_value = self.base_pg.smooth_avals[idx][k];
         let baseline_value = self.base_pg.baseline_val[idx][k];
         if k == 0 {
@@ -194,7 +194,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.iter_counter += 1;
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
-      avg_value += self.base_pg.eval_actvals[idx][self.base_pg.ep_k_offsets[idx]];
+      avg_value += self.base_pg.raw_actvals[idx][self.base_pg.ep_k_offsets[idx]];
     }
     avg_value /= self.cfg.minibatch_sz as f32;
     avg_value

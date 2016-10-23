@@ -1,3 +1,5 @@
+#![feature(core_intrinsics)]
+
 extern crate densearray;
 extern crate operator;
 extern crate rng;
