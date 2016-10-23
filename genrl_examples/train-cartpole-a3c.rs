@@ -6,10 +6,8 @@ extern crate rng;
 extern crate rand;
 
 use genrl::examples::cartpole::{CartpoleConfig, CartpoleEnv};
-use genrl::env::{SumValue, Discount, DiscountedValue, Episode};
+use genrl::env::{SumValue, Discount, DiscountedValue};
 use genrl::opt::a3c::{AdamA3CConfig, AdamA3CBuilder};
-//use genrl::opt::aac_new::{SgdAdvActorCriticConfig, SgdAdvActorCriticWorker};
-//use genrl::opt::pg_new::{PolicyGradConfig, SgdPolicyGradWorker};
 use neuralops::prelude::*;
 use operator::prelude::*;
 use rng::xorshift::{Xorshiftplus128Rng};
@@ -59,21 +57,22 @@ fn main() {
     preprocs:   vec![
     ],
   }, OpCapability::Backward);
-  /*let affine1 = NewAffineOperator::new(AffineOperatorConfig{
+  let affine1 = NewAffineOperator::new(AffineOperatorConfig{
     batch_sz:   batch_sz,
     in_dim:     4,
     out_dim:    8,
     act_kind:   ActivationKind::Rect,
     w_init:     ParamInitKind::Kaiming,
-  }, OpCapability::Backward, input, 0);*/
+  }, OpCapability::Backward, input, 0);
   let affine2 = NewAffineOperator::new(AffineOperatorConfig{
     batch_sz:   batch_sz,
-    in_dim:     4,
+    in_dim:     8,
     out_dim:    1,
-    act_kind:   ActivationKind::Logistic,
+    //act_kind:   ActivationKind::Logistic,
+    act_kind:   ActivationKind::Identity,
     w_init:     ParamInitKind::Kaiming,
-  }, OpCapability::Backward, input, 0);
-  //}, OpCapability::Backward, affine1, 0);
+  //}, OpCapability::Backward, input, 0);
+  }, OpCapability::Backward, affine1, 0);
   let v_loss = LstSqRegressLoss::new(RegressLossConfig{
     batch_sz:   batch_sz,
   }, OpCapability::Backward, affine2, 0);
@@ -88,9 +87,9 @@ fn main() {
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
     step_size:      0.01,
-    grad_clip:      None,
+    grad_clip:      Some(0.5),
     v_step_size:    0.01,
-    v_grad_clip:    None,
+    v_grad_clip:    Some(0.5),
     gamma1:         0.1,
     gamma2:         0.01,
     epsilon:        1.0e-8,

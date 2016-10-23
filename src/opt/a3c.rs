@@ -17,6 +17,7 @@ use std::marker::{PhantomData};
 use std::ops::{Deref};
 use std::rc::{Rc};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug)]
 pub struct AdamA3CConfig<E, V, EvalV> where E: 'static + Env, V: Value<Res=E::Response>, EvalV: Value<Res=E::Response> {
@@ -47,6 +48,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 {
   cfg:          AdamA3CConfig<E, V, EvalV>,
   num_workers:  usize,
+  shared_iters: Arc<AtomicUsize>,
   shared_bar:   Arc<SpinBarrier>,
   async_param:  Arc<Mutex<Option<SharedMem<f32>>>>,
   async_gmean:  Arc<Mutex<Option<SharedMem<f32>>>>,
@@ -68,6 +70,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     AdamA3CBuilder{
       cfg:          cfg,
       num_workers:  num_workers,
+      shared_iters: Arc::new(AtomicUsize::new(0)),
       shared_bar:   Arc::new(SpinBarrier::new(num_workers)),
       async_param:  Arc::new(Mutex::new(None)),
       async_gmean:  Arc::new(Mutex::new(None)),
@@ -141,6 +144,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       num_workers:  self.num_workers,
       grad_sz:  pgrad_sz,
       vgrad_sz: vgrad_sz,
+      shared_iters: self.shared_iters,
       shared_bar:   self.shared_bar,
       iter_counter: 0,
       rng:      rng,
@@ -184,6 +188,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   num_workers:  usize,
   grad_sz:  usize,
   vgrad_sz: usize,
+  shared_iters: Arc<AtomicUsize>,
   shared_bar:   Arc<SpinBarrier>,
   iter_counter: usize,
   rng:      Xorshiftplus128Rng,
@@ -224,20 +229,24 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       policy.init_param(rng);
       policy.store_diff_param(&mut self.param);
       unsafe { volatile_copy_memory(self.async_param.as_ptr() as *mut _, self.param.as_ptr(), self.grad_sz) };
+      println!("DEBUG: |param|: {} {:.6e}", self.grad_sz, self.param.reshape(self.grad_sz).l2_norm());
 
       let mut value_fn = self.value_fn.borrow_mut();
       value_fn.init_param(rng);
       value_fn.store_diff_param(&mut self.vparam);
       unsafe { volatile_copy_memory(self.async_vparam.as_ptr() as *mut _, self.vparam.as_ptr(), self.vgrad_sz) };
+      println!("DEBUG: |vparam|: {} {:.6e}", self.vgrad_sz, self.vparam.reshape(self.vgrad_sz).l2_norm());
     }
     self.shared_bar.wait();
     if self.worker_rank != 0 {
       let mut policy = self.policy.borrow_mut();
-      self.param.copy_from_slice(&self.async_param);
+      //self.param.copy_from_slice(&self.async_param);
+      unsafe { volatile_copy_memory(self.param.as_mut_ptr(), self.async_param.as_ptr(), self.grad_sz) };
       policy.load_diff_param(&mut self.param);
 
       let mut value_fn = self.value_fn.borrow_mut();
-      self.vparam.copy_from_slice(&self.async_vparam);
+      //self.vparam.copy_from_slice(&self.async_vparam);
+      unsafe { volatile_copy_memory(self.vparam.as_mut_ptr(), self.async_vparam.as_ptr(), self.vgrad_sz) };
       value_fn.load_diff_param(&mut self.vparam);
     }
     self.shared_bar.wait();
@@ -245,12 +254,14 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn update(&mut self) -> f32 {
     if self.num_workers > 1 {
-      self.param.copy_from_slice(&*self.async_param);
-      self.gmean.copy_from_slice(&*self.async_gmean);
-      self.gvar.copy_from_slice(&*self.async_gvar);
-      self.vparam.copy_from_slice(&*self.async_vparam);
-      self.vgmean.copy_from_slice(&*self.async_vgmean);
-      self.vgvar.copy_from_slice(&*self.async_vgvar);
+      unsafe {
+        volatile_copy_memory(self.param.as_mut_ptr(),   self.async_param.as_ptr(),  self.grad_sz);
+        volatile_copy_memory(self.gmean.as_mut_ptr(),   self.async_gmean.as_ptr(),  self.grad_sz);
+        volatile_copy_memory(self.gvar.as_mut_ptr(),    self.async_gvar.as_ptr(),   self.grad_sz);
+        volatile_copy_memory(self.vparam.as_mut_ptr(),  self.async_vparam.as_ptr(), self.vgrad_sz);
+        volatile_copy_memory(self.vgmean.as_mut_ptr(),  self.async_vgmean.as_ptr(), self.vgrad_sz);
+        volatile_copy_memory(self.vgvar.as_mut_ptr(),   self.async_vgvar.as_ptr(),  self.vgrad_sz);
+      }
     }
     let mut policy = self.policy.borrow_mut();
     let mut value_fn = self.value_fn.borrow_mut();
@@ -377,15 +388,18 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
     if self.num_workers > 1 {
       unsafe {
-        volatile_copy_memory(self.async_param.as_ptr() as *mut _, self.param.as_ptr(), self.grad_sz);
-        volatile_copy_memory(self.async_gmean.as_ptr() as *mut _, self.gmean.as_ptr(), self.grad_sz);
-        volatile_copy_memory(self.async_gvar.as_ptr() as *mut _, self.gvar.as_ptr(), self.grad_sz);
-        volatile_copy_memory(self.async_vparam.as_ptr() as *mut _, self.vparam.as_ptr(), self.vgrad_sz);
-        volatile_copy_memory(self.async_vgmean.as_ptr() as *mut _, self.vgmean.as_ptr(), self.vgrad_sz);
-        volatile_copy_memory(self.async_vgvar.as_ptr() as *mut _, self.vgvar.as_ptr(), self.vgrad_sz);
+        volatile_copy_memory(self.async_param.as_ptr() as *mut _,   self.param.as_ptr(),    self.grad_sz);
+        volatile_copy_memory(self.async_gmean.as_ptr() as *mut _,   self.gmean.as_ptr(),    self.grad_sz);
+        volatile_copy_memory(self.async_gvar.as_ptr() as *mut _,    self.gvar.as_ptr(),     self.grad_sz);
+        volatile_copy_memory(self.async_vparam.as_ptr() as *mut _,  self.vparam.as_ptr(),   self.vgrad_sz);
+        volatile_copy_memory(self.async_vgmean.as_ptr() as *mut _,  self.vgmean.as_ptr(),   self.vgrad_sz);
+        volatile_copy_memory(self.async_vgvar.as_ptr() as *mut _,   self.vgvar.as_ptr(),    self.vgrad_sz);
       }
     }
+
+    self.shared_iters.fetch_add(1, Ordering::SeqCst);
     self.iter_counter += 1;
+
     let mut avg_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
       avg_value += self.base_pg.raw_actvals[idx][self.base_pg.ep_k_offsets[idx]];
