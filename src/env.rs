@@ -176,6 +176,36 @@ pub trait Value: Copy + Debug {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct SumValue<T> where T: Copy {
+  pub value:    T,
+}
+
+impl Value for SumValue<f32> {
+  type Cfg = ();
+  type Res = f32;
+
+  fn from_res(res: f32, cfg: ()) -> SumValue<f32> {
+    SumValue{
+      value:    res,
+    }
+  }
+
+  fn from_scalar(scalar_value: f32, cfg: ()) -> SumValue<f32> {
+    SumValue{
+      value:    scalar_value,
+    }
+  }
+
+  fn to_scalar(&self) -> f32 {
+    self.value
+  }
+
+  fn lreduce(&mut self, prefix: f32) {
+    self.value = prefix + self.value;
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Discount<T>(pub T) where T: Copy;
 
 #[derive(Clone, Copy, Debug)]
@@ -208,6 +238,53 @@ impl Value for DiscountedValue<f32> {
 
   fn lreduce(&mut self, prefix: f32) {
     self.value = prefix + self.discount * self.value;
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ClipDiscountedValue<T> where T: Copy {
+  pub value:    T,
+  pub discount: T,
+}
+
+impl Value for ClipDiscountedValue<f32> {
+  type Cfg = Discount<f32>;
+  type Res = f32;
+
+  fn from_res(res: f32, cfg: Discount<f32>) -> ClipDiscountedValue<f32> {
+    let clipped_res = if res > 0.0 {
+      1.0
+    } else if res < 0.0 {
+      -1.0
+    } else {
+      0.0
+    };
+    ClipDiscountedValue{
+      value:    clipped_res,
+      discount: cfg.0,
+    }
+  }
+
+  fn from_scalar(scalar_value: f32, cfg: Discount<f32>) -> ClipDiscountedValue<f32> {
+    ClipDiscountedValue{
+      value:    scalar_value,
+      discount: cfg.0,
+    }
+  }
+
+  fn to_scalar(&self) -> f32 {
+    self.value
+  }
+
+  fn lreduce(&mut self, prefix: f32) {
+    let clipped_prefix = if prefix > 0.0 {
+      1.0
+    } else if prefix < 0.0 {
+      -1.0
+    } else {
+      0.0
+    };
+    self.value = clipped_prefix + self.discount * self.value;
   }
 }
 
