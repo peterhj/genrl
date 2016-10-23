@@ -87,8 +87,8 @@ fn main() {
   let pg_cfg = SgdAdvActorCriticConfig{
     batch_sz:       batch_sz,
     minibatch_sz:   minibatch_sz,
-    step_size:      0.1,
-    v_step_size:    0.01,
+    step_size:      0.01,
+    v_step_size:    0.001,
     max_horizon:    max_horizon,
     update_steps:   Some(100),
     init_cfg:       init_cfg,

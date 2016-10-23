@@ -80,7 +80,7 @@ pub trait StochasticPolicy {
 pub struct BasePolicyGrad<E, V, Policy> where E: 'static + Env, V: Value<Res=E::Response> {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
-  pub max_horizon:  usize,
+  //pub max_horizon:  usize,
   pub cache:        Vec<SampleItem>,
   pub cache_idxs:   Vec<usize>,
   pub act_dist:     DiscreteDist32,
@@ -100,7 +100,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       V: Value<Res=E::Response>,
       Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
 {
-  pub fn new<R>(minibatch_sz: usize, max_horizon: usize, init_cfg: &E::Init, rng: &mut R) -> BasePolicyGrad<E, V, Policy> where R: Rng {
+  pub fn new<R>(minibatch_sz: usize, /*max_horizon: usize,*/ init_cfg: &E::Init, rng: &mut R) -> BasePolicyGrad<E, V, Policy> where R: Rng {
     let mut cache = Vec::with_capacity(minibatch_sz);
     let mut cache_idxs = Vec::with_capacity(minibatch_sz);
     cache_idxs.resize(minibatch_sz, 0);
@@ -131,7 +131,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     BasePolicyGrad{
       batch_sz:     minibatch_sz, // FIXME(20161018): a hack.
       minibatch_sz: minibatch_sz,
-      max_horizon:  max_horizon,
+      //max_horizon:  max_horizon,
       cache:        cache,
       cache_idxs:   cache_idxs,
       act_dist:     DiscreteDist32::new(<E::Action as Action>::dim()),
@@ -146,10 +146,19 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn sample_steps<R>(&mut self, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut Policy, rng: &mut R) where R: Rng {
+  pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng {
+    for (idx, episode) in self.episodes.iter_mut().enumerate() {
+      episode.reset(init_cfg, rng);
+      assert_eq!(0, episode.horizon());
+      self.ep_k_offsets[idx] = episode.horizon();
+      self.ep_is_term[idx] = false;
+    }
+  }
+
+  pub fn sample_steps<R>(&mut self, max_horizon: Option<usize>, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut Policy, rng: &mut R) where R: Rng {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
-      if self.ep_is_term[idx] || episode.terminated() || episode.horizon() >= self.max_horizon {
+      if self.ep_is_term[idx] || episode.terminated() || (max_horizon.is_some() && episode.horizon() >= max_horizon.unwrap()) {
         episode.reset(init_cfg, rng);
         assert_eq!(0, episode.horizon());
       }
@@ -406,7 +415,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let minibatch_sz = cfg.minibatch_sz;
     let max_horizon = cfg.max_horizon;
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-    let base_pg = BasePolicyGrad::new(minibatch_sz, max_horizon, &cfg.init_cfg, &mut rng);
+    let base_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
     let grad_sz = policy.borrow_mut().diff_param_sz();
     //println!("DEBUG: grad sz: {}", grad_sz);
     let mut param = Vec::with_capacity(grad_sz);
@@ -435,7 +444,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn update(&mut self) -> f32 {
     let mut policy = self.policy.borrow_mut();
-    self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
+    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
     self.base_pg.fill_step_values(&self.cfg.value_cfg);
     policy.reset_loss();
     policy.reset_grad();

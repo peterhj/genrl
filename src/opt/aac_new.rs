@@ -62,7 +62,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let minibatch_sz = cfg.minibatch_sz;
     let max_horizon = cfg.max_horizon;
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-    let base_pg = BasePolicyGrad::new(minibatch_sz, max_horizon, &cfg.init_cfg, &mut rng);
+    let base_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
     let pgrad_sz = policy.borrow_mut().diff_param_sz();
     let vgrad_sz = value_fn.borrow_mut().diff_param_sz();
     //println!("DEBUG: grad sz: {}", grad_sz);
@@ -104,7 +104,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   pub fn update(&mut self) -> f32 {
     let mut policy = self.policy.borrow_mut();
     let mut value_fn = self.value_fn.borrow_mut();
-    self.base_pg.sample_steps(self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
+    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
     self.base_pg.impute_step_values(self.cfg.update_steps, &mut *value_fn);
     self.base_pg.impute_final_values(&mut *value_fn);
     self.base_pg.fill_step_values(&self.cfg.value_cfg);

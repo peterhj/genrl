@@ -134,6 +134,37 @@ impl Response for Discounted<f32> {
   }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct NormalizeDiscounted<T> where T: Copy {
+  pub value:    T,
+  pub discount: T,
+  pub count:    usize,
+}
+
+impl<T> NormalizeDiscounted<T> where T: Copy {
+  pub fn new(value: T, discount: T) -> NormalizeDiscounted<T> {
+    NormalizeDiscounted{
+      value:    value,
+      discount: discount,
+      count:    1,
+    }
+  }
+}
+
+impl Response for NormalizeDiscounted<f32> {
+  #[inline]
+  fn lreduce(&mut self, prefix: NormalizeDiscounted<f32>) {
+    assert_eq!(1, prefix.count);
+    self.value = prefix.value + prefix.discount * self.value;
+    self.count += 1;
+  }
+
+  #[inline]
+  fn as_scalar(&self) -> f32 {
+    self.value * (1.0 - self.discount) / (1.0 - self.discount.powi(self.count as i32))
+  }
+}
+
 pub trait Value: Copy + Debug {
   type Cfg: Copy;
   type Res: Response;
@@ -172,7 +203,7 @@ impl Value for DiscountedValue<f32> {
   }
 
   fn to_scalar(&self) -> f32 {
-    self.value * (1.0 - self.discount)
+    self.value
   }
 
   fn lreduce(&mut self, prefix: f32) {
@@ -181,33 +212,35 @@ impl Value for DiscountedValue<f32> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct NormalizeDiscounted<T> where T: Copy {
+pub struct NormDiscountedValue<T> where T: Copy {
   pub value:    T,
   pub discount: T,
-  pub count:    usize,
 }
 
-impl<T> NormalizeDiscounted<T> where T: Copy {
-  pub fn new(value: T, discount: T) -> NormalizeDiscounted<T> {
-    NormalizeDiscounted{
-      value:    value,
-      discount: discount,
-      count:    1,
+impl Value for NormDiscountedValue<f32> {
+  type Cfg = Discount<f32>;
+  type Res = f32;
+
+  fn from_res(res: f32, cfg: Discount<f32>) -> NormDiscountedValue<f32> {
+    NormDiscountedValue{
+      value:    res,
+      discount: cfg.0,
     }
   }
-}
 
-impl Response for NormalizeDiscounted<f32> {
-  #[inline]
-  fn lreduce(&mut self, prefix: NormalizeDiscounted<f32>) {
-    assert_eq!(1, prefix.count);
-    self.value = prefix.value + prefix.discount * self.value;
-    self.count += 1;
+  fn from_scalar(scalar_value: f32, cfg: Discount<f32>) -> NormDiscountedValue<f32> {
+    NormDiscountedValue{
+      value:    scalar_value,
+      discount: cfg.0,
+    }
   }
 
-  #[inline]
-  fn as_scalar(&self) -> f32 {
-    self.value * (1.0 - self.discount) / (1.0 - self.discount.powi(self.count as i32))
+  fn to_scalar(&self) -> f32 {
+    self.value * (1.0 - self.discount)
+  }
+
+  fn lreduce(&mut self, prefix: f32) {
+    self.value = prefix + self.discount * self.value;
   }
 }
 
