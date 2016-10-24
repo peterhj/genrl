@@ -415,6 +415,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       unsafe {
         volatile_copy_memory(self.tmp_buf.as_mut_ptr(), self.async_param.as_ptr(), self.grad_sz);
       }
+    } else {
+      self.tmp_buf.copy_from_slice(&self.param);
     }
     policy.load_diff_param(&mut self.tmp_buf);
     let mut avg_value = 0.0;

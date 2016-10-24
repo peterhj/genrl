@@ -167,10 +167,17 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
     let mut step = 0;
     loop {
+      let mut max_count = 0;
       let mut term_count = 0;
       self.cache.clear();
       self.cache_idxs.clear();
       for (idx, episode) in self.episodes.iter_mut().enumerate() {
+        if let Some(max_horizon) = max_horizon {
+          if episode.horizon() >= max_horizon {
+            max_count += 1;
+            continue;
+          }
+        }
         if self.ep_is_term[idx] || episode.terminated() {
           term_count += 1;
           self.ep_is_term[idx] = true;
@@ -189,8 +196,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.cache.push(item);
         self.cache_idxs.push(idx);
       }
-      if term_count >= self.episodes.len() {
-        assert_eq!(term_count, self.episodes.len());
+      if max_count + term_count >= self.episodes.len() {
+        assert_eq!(max_count + term_count, self.episodes.len());
         break;
       }
       assert!(!self.cache.is_empty());
@@ -254,7 +261,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       } else {
         None
       };
+      //self.raw_actvals[idx].clear();
       self.raw_actvals[idx].resize(episode.horizon(), 0.0);
+      //self.smooth_avals[idx].clear();
       self.smooth_avals[idx].resize(episode.horizon(), 0.0);
       for k in (self.ep_k_offsets[idx] .. episode.horizon()).rev() {
         if let Some(res) = episode.steps[k].res {
@@ -285,6 +294,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn impute_step_values<ValueFn>(&mut self, max_num_steps: Option<usize>, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
     for (idx, episode) in self.episodes.iter().enumerate() {
+      //self.baseline_val[idx].clear();
       self.baseline_val[idx].resize(episode.horizon(), 0.0);
     }
     let mut step = 0;

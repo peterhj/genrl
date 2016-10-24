@@ -68,20 +68,12 @@ fn main() {
     batch_sz:   batch_sz,
     in_dim:     8,
     out_dim:    1,
-    //act_kind:   ActivationKind::Logistic,
     act_kind:   ActivationKind::Identity,
     w_init:     ParamInitKind::Kaiming,
-  //}, OpCapability::Backward, input, 0);
   }, OpCapability::Backward, affine1, 0);
   let v_loss = LstSqRegressLoss::new(RegressLossConfig{
     batch_sz:   batch_sz,
   }, OpCapability::Backward, affine2, 0);
-  /*let v_loss = NormLstSqRegressLoss::new(NormLstSqRegressLossConfig{
-    batch_sz:   batch_sz,
-    avg_rate:   0.01,
-    epsilon:    1.0e-6,
-    init_var:   1.0,
-  }, OpCapability::Backward, affine2, 0);*/
 
   let pg_cfg = AdamA3CConfig{
     batch_sz:       batch_sz,
@@ -105,11 +97,13 @@ fn main() {
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
   worker.init_param(&mut rng);
   for iter_nr in 0 .. max_iter {
-    let avg_value = worker.update();
-    if iter_nr % 100 == 0 {
-      //println!("DEBUG: iter: {} stats: {:?}", iter_nr, worker.get_opt_stats());
-      //worker.reset_opt_stats();
-      println!("DEBUG: iter: {} res: {:?}", iter_nr, avg_value);
+    let train_value = worker.update();
+    if (iter_nr+1) % 20 == 0 {
+      println!("DEBUG: train:       iter: {} value: {:?}", iter_nr+1, train_value);
+    }
+    if (iter_nr+1) % 100 == 0 {
+      let eval_value = worker.eval(100);
+      println!("DEBUG: evaluation:  iter: {} value: {:?}", iter_nr+1, eval_value);
     }
   }
 }
