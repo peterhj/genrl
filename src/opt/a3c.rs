@@ -407,4 +407,27 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     avg_value /= self.cfg.minibatch_sz as f32;
     avg_value
   }
+
+  pub fn eval(&mut self, num_trials: usize) -> f32 {
+    let num_minibatches = (num_trials + self.cfg.minibatch_sz - 1) / self.cfg.minibatch_sz;
+    let mut policy = self.policy.borrow_mut();
+    if self.num_workers > 1 {
+      unsafe {
+        volatile_copy_memory(self.tmp_buf.as_mut_ptr(), self.async_param.as_ptr(), self.grad_sz);
+      }
+    }
+    policy.load_diff_param(&mut self.tmp_buf);
+    let mut avg_value = 0.0;
+    for minibatch in 0 .. num_minibatches {
+      self.eval_pg.reset(&self.cfg.init_cfg, &mut self.rng);
+      self.eval_pg.sample_steps(Some(self.cfg.max_horizon), None, &self.cfg.init_cfg, &mut policy, &mut self.rng);
+      self.eval_pg.fill_step_values(&self.cfg.eval_cfg);
+      for idx in 0 .. self.cfg.minibatch_sz {
+        assert_eq!(0, self.eval_pg.ep_k_offsets[idx]);
+        avg_value += self.eval_pg.raw_actvals[idx][0];
+      }
+    }
+    avg_value /= (num_minibatches * self.cfg.minibatch_sz) as f32;
+    avg_value
+  }
 }
