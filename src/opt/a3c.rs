@@ -19,8 +19,18 @@ use std::rc::{Rc};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(RustcEncodable)]
+pub struct A3CTraceRecord {
+  pub iter:         usize,
+  pub step_count:   usize,
+  pub avg_value:    f32,
+  pub value_fn_avg_loss:    f32,
+  pub elapsed:      f64,
+}
+
 #[derive(Clone, Copy, Debug)]
-pub struct AdamA3CConfig<E, V, EvalV> where E: 'static + Env, V: Value<Res=E::Response>, EvalV: Value<Res=E::Response> {
+//pub struct AdamA3CConfig<E, V, EvalV> where E: 'static + Env, V: Value<Res=E::Response>, EvalV: Value<Res=E::Response> {
+pub struct AdamA3CConfig<Init, VCfg, EvalVCfg> {
   pub batch_sz:     usize,
   pub minibatch_sz: usize,
   pub step_size:    f32,
@@ -32,22 +42,25 @@ pub struct AdamA3CConfig<E, V, EvalV> where E: 'static + Env, V: Value<Res=E::Re
   pub epsilon:      f32,
   pub max_horizon:  usize,
   pub update_steps: Option<usize>,
+  pub impute_final: bool,
   pub normal_adv:   bool,
-  pub init_cfg:     E::Init,
-  pub value_cfg:    V::Cfg,
-  pub eval_cfg:     EvalV::Cfg,
+  pub init_cfg:     Init,
+  pub value_cfg:    VCfg,
+  pub eval_cfg:     EvalVCfg,
 }
 
 #[derive(Clone)]
-pub struct AdamA3CBuilder<E, V, EvalV>
+pub struct AdamA3CBuilder
+/*pub struct AdamA3CBuilder<E, V, EvalV>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Init: Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      EvalV: Value<Res=E::Response>,
+      EvalV: Value<Res=E::Response>,*/
 {
-  cfg:          AdamA3CConfig<E, V, EvalV>,
+  //cfg:          AdamA3CConfig<E, V, EvalV>,
   num_workers:  usize,
+  step_count:   Arc<AtomicUsize>,
   shared_iters: Arc<AtomicUsize>,
   shared_bar:   Arc<SpinBarrier>,
   async_param:  Arc<Mutex<Option<SharedMem<f32>>>>,
@@ -58,18 +71,21 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   async_vgvar:  Arc<Mutex<Option<SharedMem<f32>>>>,
 }
 
-impl<E, V, EvalV> AdamA3CBuilder<E, V, EvalV>
+impl AdamA3CBuilder
+/*impl<E, V, EvalV> AdamA3CBuilder<E, V, EvalV>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Init: Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      EvalV: Value<Res=E::Response>,
+      EvalV: Value<Res=E::Response>,*/
 {
-  pub fn new(cfg: AdamA3CConfig<E, V, EvalV>, num_workers: usize) -> Self {
-    assert!(cfg.epsilon * cfg.epsilon > 0.0);
+  pub fn new(num_workers: usize) -> Self {
+  //pub fn new(cfg: AdamA3CConfig<E, V, EvalV>, num_workers: usize) -> Self {
+    //assert!(cfg.epsilon * cfg.epsilon > 0.0);
     AdamA3CBuilder{
-      cfg:          cfg,
+      //cfg:          cfg,
       num_workers:  num_workers,
+      step_count:   Arc::new(AtomicUsize::new(0)),
       shared_iters: Arc::new(AtomicUsize::new(0)),
       shared_bar:   Arc::new(SpinBarrier::new(num_workers)),
       async_param:  Arc::new(Mutex::new(None)),
@@ -81,16 +97,21 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn into_worker<Policy, ValueFn>(self, worker_rank: usize, policy: Rc<RefCell<Policy>>, value_fn: Rc<RefCell<ValueFn>>) -> AdamA3CWorker<E, V, EvalV, Policy, ValueFn>
-  where Policy: DiffLoss<SampleItem, IoBuf=[f32]>,
+  //pub fn into_worker<E, V, EvalV, Policy, ValueFn>(self, cfg: AdamA3CConfig<E, V, EvalV>, worker_rank: usize, policy: Rc<RefCell<Policy>>, value_fn: Rc<RefCell<ValueFn>>) -> AdamA3CWorker<E, V, EvalV, Policy, ValueFn>
+  pub fn into_worker<E, V, EvalV, Policy, ValueFn>(self, cfg: AdamA3CConfig<E::Init, V::Cfg, EvalV::Cfg>, worker_rank: usize, policy: Rc<RefCell<Policy>>, value_fn: Rc<RefCell<ValueFn>>) -> AdamA3CWorker<E, V, EvalV, Policy, ValueFn>
+  where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
+        E::Action: DiscreteAction,
+        V: Value<Res=E::Response>,
+        EvalV: Value<Res=E::Response>,
+        Policy: DiffLoss<SampleItem, IoBuf=[f32]>,
         ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
   {
-    let batch_sz = self.cfg.batch_sz;
-    let minibatch_sz = self.cfg.minibatch_sz;
-    let max_horizon = self.cfg.max_horizon;
+    let batch_sz = cfg.batch_sz;
+    let minibatch_sz = cfg.minibatch_sz;
+    let max_horizon = cfg.max_horizon;
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-    let base_pg = BasePolicyGrad::new(minibatch_sz, &self.cfg.init_cfg, &mut rng);
-    let eval_pg = BasePolicyGrad::new(minibatch_sz, &self.cfg.init_cfg, &mut rng);
+    let base_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
+    let eval_pg = BasePolicyGrad::new(minibatch_sz, &cfg.init_cfg, &mut rng);
     let pgrad_sz = policy.borrow_mut().diff_param_sz();
     let vgrad_sz = value_fn.borrow_mut().diff_param_sz();
     let mut param = Vec::with_capacity(pgrad_sz);
@@ -139,11 +160,12 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
     self.shared_bar.wait();
     let worker = AdamA3CWorker{
-      cfg:      self.cfg,
+      cfg:      cfg,
       worker_rank:  worker_rank,
       num_workers:  self.num_workers,
       grad_sz:  pgrad_sz,
       vgrad_sz: vgrad_sz,
+      step_count:   self.step_count,
       shared_iters: self.shared_iters,
       shared_bar:   self.shared_bar,
       iter_counter: 0,
@@ -183,11 +205,12 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       Policy: DiffLoss<SampleItem, IoBuf=[f32]>,
       ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
 {
-  cfg:      AdamA3CConfig<E, V, EvalV>,
+  cfg:      AdamA3CConfig<E::Init, V::Cfg, EvalV::Cfg>,
   worker_rank:  usize,
   num_workers:  usize,
   grad_sz:  usize,
   vgrad_sz: usize,
+  step_count:   Arc<AtomicUsize>,
   shared_iters: Arc<AtomicUsize>,
   shared_bar:   Arc<SpinBarrier>,
   iter_counter: usize,
@@ -252,15 +275,27 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.shared_bar.wait();
   }
 
-  pub fn update(&mut self) -> f32 {
+  pub fn step_count(&self) -> usize {
+    self.step_count.load(Ordering::Acquire)
+  }
+
+  pub fn update(&mut self) -> (f32, f32, f32, f32) {
     if self.num_workers > 1 {
       unsafe {
-        volatile_copy_memory(self.param.as_mut_ptr(),   self.async_param.as_ptr(),  self.grad_sz);
-        volatile_copy_memory(self.gmean.as_mut_ptr(),   self.async_gmean.as_ptr(),  self.grad_sz);
-        volatile_copy_memory(self.gvar.as_mut_ptr(),    self.async_gvar.as_ptr(),   self.grad_sz);
-        volatile_copy_memory(self.vparam.as_mut_ptr(),  self.async_vparam.as_ptr(), self.vgrad_sz);
-        volatile_copy_memory(self.vgmean.as_mut_ptr(),  self.async_vgmean.as_ptr(), self.vgrad_sz);
-        volatile_copy_memory(self.vgvar.as_mut_ptr(),   self.async_vgvar.as_ptr(),  self.vgrad_sz);
+        volatile_copy_memory(self.param.as_mut_ptr(),       self.async_param.as_ptr(),  self.grad_sz);
+        if self.cfg.gamma1 < 1.0 {
+          volatile_copy_memory(self.gmean.as_mut_ptr(),     self.async_gmean.as_ptr(),  self.grad_sz);
+        }
+        if self.cfg.gamma2 < 1.0 {
+          volatile_copy_memory(self.gvar.as_mut_ptr(),      self.async_gvar.as_ptr(),   self.grad_sz);
+        }
+        volatile_copy_memory(self.vparam.as_mut_ptr(),      self.async_vparam.as_ptr(), self.vgrad_sz);
+        if self.cfg.gamma1 < 1.0 {
+          volatile_copy_memory(self.vgmean.as_mut_ptr(),    self.async_vgmean.as_ptr(), self.vgrad_sz);
+        }
+        if self.cfg.gamma2 < 1.0 {
+          volatile_copy_memory(self.vgvar.as_mut_ptr(),     self.async_vgvar.as_ptr(),  self.vgrad_sz);
+        }
       }
     }
     let mut policy = self.policy.borrow_mut();
@@ -270,8 +305,14 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
     self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
     self.base_pg.impute_step_values(self.cfg.update_steps, &mut *value_fn);
-    self.base_pg.impute_final_values(&mut *value_fn);
+    if self.cfg.impute_final {
+      self.base_pg.impute_final_values(&mut *value_fn);
+    }
     self.base_pg.fill_step_values(&self.cfg.value_cfg);
+    if self.cfg.normal_adv {
+      // FIXME(20161024): normalize the per-episode advantages.
+      unimplemented!();
+    }
 
     policy.reset_loss();
     policy.reset_grad();
@@ -282,7 +323,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.cache.clear();
     self.vcache.clear();
     let mut steps_count = 0;
-    let mut tmp_baselines = vec![];
+    //let mut tmp_baselines = vec![];
     for (idx, episode) in self.base_pg.episodes.iter().enumerate() {
       for k in self.base_pg.ep_k_offsets[idx] .. episode.horizon() {
         let mut policy_item = SampleItem::new();
@@ -295,9 +336,9 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         let action_value = self.base_pg.raw_actvals[idx][k];
         let smoothed_action_value = self.base_pg.smooth_avals[idx][k];
         let baseline_value = self.base_pg.baseline_val[idx][k];
-        if k == 0 {
+        /*if k == 0 {
           tmp_baselines.push(baseline_value);
-        }
+        }*/
         policy_item.kvs.insert::<SampleExtractInputKey<[f32]>>(env.clone());
         policy_item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
         policy_item.kvs.insert::<SampleClassLabelKey>(episode.steps[k].action.idx());
@@ -325,6 +366,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.vcache.clear();
       }
     }
+    self.step_count.fetch_add(steps_count, Ordering::AcqRel);
     //println!("DEBUG: baselines[0]: {:?}", &tmp_baselines);
     //println!("DEBUG: baselines[H]: {:?}", &self.base_pg.final_values);
     if !self.cache.is_empty() {
@@ -343,9 +385,18 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     policy.update_nondiff_param(self.iter_counter);
     value_fn.update_nondiff_param(self.iter_counter);
 
-    let gamma1_scale = 1.0 / (1.0 - (1.0 - self.cfg.gamma1).powi((self.iter_counter + 1) as i32));
-    let gamma2_scale = 1.0 / (1.0 - (1.0 - self.cfg.gamma2).powi((self.iter_counter + 1) as i32));
+    let gamma1_scale = if self.cfg.gamma1 < 1.0 {
+      1.0 / (1.0 - (1.0 - self.cfg.gamma1).powi((self.iter_counter + 1) as i32))
+    } else {
+      1.0
+    };
+    let gamma2_scale = if self.cfg.gamma2 < 1.0 {
+      1.0 / (1.0 - (1.0 - self.cfg.gamma2).powi((self.iter_counter + 1) as i32))
+    } else {
+      1.0
+    };
 
+    let policy_loss = policy.store_loss() / self.cfg.minibatch_sz as f32;
     policy.store_grad(&mut self.grad);
     self.grad.reshape_mut(self.grad_sz).scale(1.0 / self.cfg.minibatch_sz as f32);
     if let Some(grad_clip) = self.cfg.grad_clip {
@@ -354,10 +405,18 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.grad.reshape_mut(self.grad_sz).scale(grad_clip / grad_norm);
       }
     }
-    self.gmean.reshape_mut(self.grad_sz).average(self.cfg.gamma1, self.grad.reshape(self.grad_sz));
+    if self.cfg.gamma1 < 1.0 {
+      self.gmean.reshape_mut(self.grad_sz).average(self.cfg.gamma1, self.grad.reshape(self.grad_sz));
+    } else {
+      self.gmean.copy_from_slice(&self.grad);
+    }
     self.tmp_buf[ .. self.grad_sz].copy_from_slice(&self.grad);
     self.tmp_buf.reshape_mut(self.grad_sz).square();
-    self.gvar.reshape_mut(self.grad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.grad_sz));
+    if self.cfg.gamma2 < 1.0 {
+      self.gvar.reshape_mut(self.grad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.grad_sz));
+    } else {
+      self.gvar.copy_from_slice(&self.tmp_buf[ .. self.grad_sz]);
+    }
     self.tmp_buf[ .. self.grad_sz].copy_from_slice(&self.gvar);
     self.tmp_buf.reshape_mut(self.grad_sz).scale(gamma2_scale);
     self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
@@ -366,6 +425,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(gamma1_scale, self.gmean.reshape(self.grad_sz));
     self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
 
+    let value_fn_loss = value_fn.store_loss() / steps_count as f32;
     value_fn.store_grad(&mut self.vgrad);
     self.vgrad.reshape_mut(self.vgrad_sz).scale(1.0 / steps_count as f32);
     if let Some(vgrad_clip) = self.cfg.v_grad_clip {
@@ -374,10 +434,18 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         self.vgrad.reshape_mut(self.vgrad_sz).scale(vgrad_clip / vgrad_norm);
       }
     }
-    self.vgmean.reshape_mut(self.vgrad_sz).average(self.cfg.gamma1, self.vgrad.reshape(self.vgrad_sz));
+    if self.cfg.gamma1 < 1.0 {
+      self.vgmean.reshape_mut(self.vgrad_sz).average(self.cfg.gamma1, self.vgrad.reshape(self.vgrad_sz));
+    } else {
+      self.vgmean.copy_from_slice(&self.vgrad);
+    }
     self.tmp_buf[ .. self.vgrad_sz].copy_from_slice(&self.vgrad);
     self.tmp_buf.reshape_mut(self.vgrad_sz).square();
-    self.vgvar.reshape_mut(self.vgrad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.vgrad_sz));
+    if self.cfg.gamma2 < 1.0 {
+      self.vgvar.reshape_mut(self.vgrad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.vgrad_sz));
+    } else {
+      self.vgvar.copy_from_slice(&self.tmp_buf[ .. self.vgrad_sz]);
+    }
     self.tmp_buf[ .. self.vgrad_sz].copy_from_slice(&self.vgvar);
     self.tmp_buf.reshape_mut(self.vgrad_sz).scale(gamma2_scale);
     self.tmp_buf.reshape_mut(self.vgrad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
@@ -388,12 +456,20 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
     if self.num_workers > 1 {
       unsafe {
-        volatile_copy_memory(self.async_param.as_ptr() as *mut _,   self.param.as_ptr(),    self.grad_sz);
-        volatile_copy_memory(self.async_gmean.as_ptr() as *mut _,   self.gmean.as_ptr(),    self.grad_sz);
-        volatile_copy_memory(self.async_gvar.as_ptr() as *mut _,    self.gvar.as_ptr(),     self.grad_sz);
-        volatile_copy_memory(self.async_vparam.as_ptr() as *mut _,  self.vparam.as_ptr(),   self.vgrad_sz);
-        volatile_copy_memory(self.async_vgmean.as_ptr() as *mut _,  self.vgmean.as_ptr(),   self.vgrad_sz);
-        volatile_copy_memory(self.async_vgvar.as_ptr() as *mut _,   self.vgvar.as_ptr(),    self.vgrad_sz);
+        volatile_copy_memory(self.async_param.as_ptr() as *mut _,       self.param.as_ptr(),    self.grad_sz);
+        if self.cfg.gamma1 < 1.0 {
+          volatile_copy_memory(self.async_gmean.as_ptr() as *mut _,     self.gmean.as_ptr(),    self.grad_sz);
+        }
+        if self.cfg.gamma2 < 1.0 {
+          volatile_copy_memory(self.async_gvar.as_ptr() as *mut _,      self.gvar.as_ptr(),     self.grad_sz);
+        }
+        volatile_copy_memory(self.async_vparam.as_ptr() as *mut _,      self.vparam.as_ptr(),   self.vgrad_sz);
+        if self.cfg.gamma1 < 1.0 {
+          volatile_copy_memory(self.async_vgmean.as_ptr() as *mut _,    self.vgmean.as_ptr(),   self.vgrad_sz);
+        }
+        if self.cfg.gamma2 < 1.0 {
+          volatile_copy_memory(self.async_vgvar.as_ptr() as *mut _,     self.vgvar.as_ptr(),    self.vgrad_sz);
+        }
       }
     }
 
@@ -401,24 +477,27 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.iter_counter += 1;
 
     let mut avg_value = 0.0;
+    let mut avg_final_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
       avg_value += self.base_pg.raw_actvals[idx][self.base_pg.ep_k_offsets[idx]];
+      avg_final_value += self.base_pg.final_values[idx].unwrap_or(0.0);
     }
     avg_value /= self.cfg.minibatch_sz as f32;
-    avg_value
+    avg_final_value /= self.cfg.minibatch_sz as f32;
+    (avg_value, avg_final_value, policy_loss, value_fn_loss)
   }
 
   pub fn eval(&mut self, num_trials: usize) -> f32 {
     let num_minibatches = (num_trials + self.cfg.minibatch_sz - 1) / self.cfg.minibatch_sz;
     let mut policy = self.policy.borrow_mut();
-    if self.num_workers > 1 {
+    /*if self.num_workers > 1 {
       unsafe {
         volatile_copy_memory(self.tmp_buf.as_mut_ptr(), self.async_param.as_ptr(), self.grad_sz);
       }
     } else {
       self.tmp_buf.copy_from_slice(&self.param);
-    }
-    policy.load_diff_param(&mut self.tmp_buf);
+    }*/
+    policy.load_diff_param(&mut self.param);
     let mut avg_value = 0.0;
     for minibatch in 0 .. num_minibatches {
       self.eval_pg.reset(&self.cfg.init_cfg, &mut self.rng);

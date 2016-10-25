@@ -261,6 +261,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       } else {
         None
       };
+      assert!(episode.horizon() > 0);
       //self.raw_actvals[idx].clear();
       self.raw_actvals[idx].resize(episode.horizon(), 0.0);
       //self.smooth_avals[idx].clear();

@@ -97,7 +97,7 @@ fn main() {
   let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
   worker.init_param(&mut rng);
   for iter_nr in 0 .. max_iter {
-    let train_value = worker.update();
+    let (train_value, train_value_fn_loss)  = worker.update();
     if (iter_nr+1) % 20 == 0 {
       println!("DEBUG: train:       iter: {} value: {:?}", iter_nr+1, train_value);
     }

@@ -7,6 +7,7 @@ extern crate sharedmem;
 
 extern crate bit_set;
 extern crate rand;
+extern crate rustc_serialize;
 
 pub mod discrete;
 pub mod env;
