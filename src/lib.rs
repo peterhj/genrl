@@ -1,6 +1,8 @@
 #![feature(core_intrinsics)]
 
 extern crate densearray;
+extern crate float;
+extern crate iter_utils;
 extern crate operator;
 extern crate rng;
 extern crate sharedmem;

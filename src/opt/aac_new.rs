@@ -41,8 +41,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   vgrad_sz: usize,
   iter_counter: usize,
   rng:      Xorshiftplus128Rng,
-  base_pg:  BasePolicyGrad<E, V, Policy>,
-  eval_pg:  BasePolicyGrad<E, EvalV, Policy>,
+  base_pg:  BasePolicyGrad<E, V>,
+  eval_pg:  BasePolicyGrad<E, EvalV>,
   policy:   Rc<RefCell<Policy>>,
   value_fn: Rc<RefCell<ValueFn>>,
   cache:    Vec<SampleItem>,
@@ -110,8 +110,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   pub fn update(&mut self) -> f32 {
     let mut policy = self.policy.borrow_mut();
     let mut value_fn = self.value_fn.borrow_mut();
-    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
-    self.base_pg.impute_step_values(self.cfg.update_steps, &mut *value_fn);
+    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut *policy, &mut self.rng);
+    self.base_pg.impute_baselines(self.cfg.update_steps, &mut *value_fn);
     self.base_pg.impute_final_values(&mut *value_fn);
     self.base_pg.fill_step_values(&self.cfg.value_cfg);
     policy.reset_loss();

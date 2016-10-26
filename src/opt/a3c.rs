@@ -215,8 +215,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
   shared_bar:   Arc<SpinBarrier>,
   iter_counter: usize,
   rng:      Xorshiftplus128Rng,
-  base_pg:  BasePolicyGrad<E, V, Policy>,
-  eval_pg:  BasePolicyGrad<E, EvalV, Policy>,
+  base_pg:  BasePolicyGrad<E, V>,
+  eval_pg:  BasePolicyGrad<E, EvalV>,
   policy:   Rc<RefCell<Policy>>,
   value_fn: Rc<RefCell<ValueFn>>,
   cache:    Vec<SampleItem>,
@@ -303,8 +303,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     policy.load_diff_param(&mut self.param);
     value_fn.load_diff_param(&mut self.vparam);
 
-    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut policy, &mut self.rng);
-    self.base_pg.impute_step_values(self.cfg.update_steps, &mut *value_fn);
+    self.base_pg.sample_steps(Some(self.cfg.max_horizon), self.cfg.update_steps, &self.cfg.init_cfg, &mut *policy, &mut self.rng);
+    self.base_pg.impute_baselines(self.cfg.update_steps, &mut *value_fn);
     if self.cfg.impute_final {
       self.base_pg.impute_final_values(&mut *value_fn);
     }
@@ -501,7 +501,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     let mut avg_value = 0.0;
     for minibatch in 0 .. num_minibatches {
       self.eval_pg.reset(&self.cfg.init_cfg, &mut self.rng);
-      self.eval_pg.sample_steps(Some(self.cfg.max_horizon), None, &self.cfg.init_cfg, &mut policy, &mut self.rng);
+      self.eval_pg.sample_steps(Some(self.cfg.max_horizon), None, &self.cfg.init_cfg, &mut *policy, &mut self.rng);
       self.eval_pg.fill_step_values(&self.cfg.eval_cfg);
       for idx in 0 .. self.cfg.minibatch_sz {
         assert_eq!(0, self.eval_pg.ep_k_offsets[idx]);

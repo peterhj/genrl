@@ -16,6 +16,8 @@ bit-set = "*"
 rand = "*"
 rustc-serialize = "*"
 densearray = { path = "../libdensearray" }
+float = "*"
+iter_utils = { path = "../libiter_utils" }
 #neuralops = { path = "../neuralops" }
 operator = { path = "../liboperator" }
 rng = { path = "../librng" }
