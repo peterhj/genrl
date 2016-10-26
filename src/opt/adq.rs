@@ -311,7 +311,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       unsafe {
         if should_update_target {
           println!("DEBUG: updating target... rank: {} steps: {}", self.worker_rank, self.step_count());
-          volatile_copy_memory(self.async_target.as_ptr() as *mut _,  self.target.as_ptr(), self.grad_sz);
+          volatile_copy_memory(self.async_target.as_ptr() as *mut _,  self.param.as_ptr(),  self.grad_sz);
         }
         volatile_copy_memory(self.async_param.as_ptr() as *mut _,     self.param.as_ptr(),  self.grad_sz);
         if self.cfg.gamma1 < 1.0 {
