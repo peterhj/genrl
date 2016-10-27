@@ -1,23 +1,25 @@
 use env::{Env};
 
 use rand::{Rng};
+use std::rc::{Rc};
 
-pub struct ReplayEntry<E> where E: Env {
-  pub orig_env: E,
+#[derive(Clone)]
+pub struct ReplayEntry<E> where E: Env + Clone {
+  pub prev_env: Rc<E>,
   pub action:   E::Action,
-  pub res:      E::Response,
-  pub next_env: E,
+  pub res:      Option<E::Response>,
+  pub next_env: Rc<E>,
 }
 
-pub struct ReplayCache<E> where E: Env {
+pub struct LinearReplayCache<E> where E: Env + Clone {
   capacity: usize,
   head:     usize,
   entries:  Vec<ReplayEntry<E>>,
 }
 
-impl<E> ReplayCache<E> where E: Env {
-  pub fn new(capacity: usize) -> ReplayCache<E> {
-    ReplayCache{
+impl<E> LinearReplayCache<E> where E: Env + Clone {
+  pub fn new(capacity: usize) -> LinearReplayCache<E> {
+    LinearReplayCache{
       capacity: capacity,
       head:     0,
       entries:  Vec::with_capacity(capacity),
@@ -32,14 +34,14 @@ impl<E> ReplayCache<E> where E: Env {
     self.entries.len() >= self.capacity
   }
 
-  pub fn insert(&mut self, orig_env: E, action: E::Action, res: E::Response, next_env: E) {
+  pub fn insert(&mut self, prev_env: Rc<E>, action: E::Action, res: Option<E::Response>, next_env: Rc<E>) {
     let entry = ReplayEntry{
-      orig_env: orig_env,
+      prev_env: prev_env,
       action:   action,
       res:      res,
       next_env: next_env,
     };
-    if self.entries.len() < self.capacity {
+    if !self.is_full() {
       self.entries.push(entry);
     } else {
       self.entries[self.head] = entry;

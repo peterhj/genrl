@@ -78,12 +78,21 @@ dependencies = [
  "bit-set 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "densearray 0.1.0",
  "float 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "genrl_kernels 0.0.1",
  "iter_utils 0.0.1",
  "operator 0.1.0",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "rng 0.1.0",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "sharedmem 0.1.0",
+]
+
+[[package]]
+name = "genrl_kernels"
+version = "0.0.1"
+dependencies = [
+ "gcc 0.3.35 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

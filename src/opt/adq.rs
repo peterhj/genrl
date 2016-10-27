@@ -1,5 +1,6 @@
 use discrete::{DiscreteDist32};
 use env::{Env, DiscreteEnv, EnvInputRepr, EnvRepr, EnvConvert, Action, DiscreteAction, Response, Value, Episode, EpisodeStep};
+use kernels::*;
 use opt::pg_new::{BasePolicyGrad};
 
 use densearray::prelude::*;
@@ -208,24 +209,23 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.shared_bar.wait();
   }
 
-  pub fn update(&mut self) -> (f32, f32) {
-    if self.num_workers > 1 {
-      unsafe {
-        volatile_copy_memory(self.target.as_mut_ptr(),  self.async_target.as_ptr(), self.grad_sz);
-        volatile_copy_memory(self.param.as_mut_ptr(),   self.async_param.as_ptr(),  self.grad_sz);
-        if self.cfg.gamma1 < 1.0 {
-          volatile_copy_memory(self.gmean.as_mut_ptr(), self.async_gmean.as_ptr(),  self.grad_sz);
-        }
-        if self.cfg.gamma2 < 1.0 {
-          volatile_copy_memory(self.gvar.as_mut_ptr(),  self.async_gvar.as_ptr(),   self.grad_sz);
-        }
+  pub fn update(&mut self) -> (f32, f32, f32) {
+    unsafe {
+      volatile_copy_memory(self.target.as_mut_ptr(),  self.async_target.as_ptr(), self.grad_sz);
+      volatile_copy_memory(self.param.as_mut_ptr(),   self.async_param.as_ptr(),  self.grad_sz);
+      /*if self.cfg.gamma1 < 1.0 {
+        volatile_copy_memory(self.gmean.as_mut_ptr(), self.async_gmean.as_ptr(),  self.grad_sz);
       }
+      if self.cfg.gamma2 < 1.0 {
+        volatile_copy_memory(self.gvar.as_mut_ptr(),  self.async_gvar.as_ptr(),   self.grad_sz);
+      }*/
     }
 
     let mut value_fn = self.value_fn.borrow_mut();
 
     let init_step_count = self.step_count();
-    let eps_greedy = self.cfg.eps_anneal.max(self.cfg.eps_init - self.cfg.eps_anneal * (init_step_count as f32 / self.cfg.epoch_sz as f32));
+    let t = 1.0_f32.min(init_step_count as f32 / self.cfg.epoch_sz as f32);
+    let eps_greedy = self.cfg.eps_init * (1.0 - t) + self.cfg.eps_anneal * t;
     value_fn.load_diff_param(&mut self.param);
     self.base_pg.sample_epsilon_greedy(Some(self.cfg.max_horizon), Some(self.cfg.update_steps), &self.cfg.init_cfg, eps_greedy, &mut *value_fn, &mut self.rng);
     value_fn.load_diff_param(&mut self.target);
@@ -281,60 +281,67 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
     let value_fn_loss = value_fn.store_loss() / iter_step_count as f32;
     value_fn.store_grad(&mut self.grad);
-    self.grad.reshape_mut(self.grad_sz).scale(1.0 / iter_step_count as f32);
+    //self.grad.reshape_mut(self.grad_sz).scale(1.0 / iter_step_count as f32);
     if let Some(grad_clip) = self.cfg.grad_clip {
       let grad_norm = self.grad.reshape(self.grad_sz).l2_norm();
       if grad_norm > grad_clip {
         self.grad.reshape_mut(self.grad_sz).scale(grad_clip / grad_norm);
       }
     }
-    if self.cfg.gamma1 == 1.0 || self.iter_counter == 0 {
+
+    /*if self.cfg.gamma1 == 1.0 || self.iter_counter == 0 {
       self.gmean.copy_from_slice(&self.grad);
     } else {
       self.gmean.reshape_mut(self.grad_sz).average(self.cfg.gamma1, self.grad.reshape(self.grad_sz));
-    }
+    }*/
     self.tmp_buf[ .. self.grad_sz].copy_from_slice(&self.grad);
     self.tmp_buf.reshape_mut(self.grad_sz).square();
-    if self.cfg.gamma2 == 1.0 || self.iter_counter == 0 {
+    /*if self.cfg.gamma2 == 1.0 || self.iter_counter == 0 {
       self.gvar.copy_from_slice(&self.tmp_buf[ .. self.grad_sz]);
     } else {
       self.gvar.reshape_mut(self.grad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.grad_sz));
+    }*/
+    if self.iter_counter == 0 {
+      unsafe { volatile_copy_memory(self.async_gvar.as_ptr() as *mut _, self.tmp_buf.as_ptr(), self.grad_sz) };
+    } else {
+      unsafe { genrl_volatile_average_f32(self.grad_sz, self.cfg.gamma2, self.tmp_buf.as_ptr(), self.async_gvar.as_ptr() as *mut _) };
     }
-    self.tmp_buf[ .. self.grad_sz].copy_from_slice(&self.gvar);
+
+    //self.tmp_buf[ .. self.grad_sz].copy_from_slice(&*self.async_gvar);
+    unsafe { volatile_copy_memory(self.tmp_buf.as_mut_ptr(), self.async_gvar.as_ptr(), self.grad_sz) };
     self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
     self.tmp_buf.reshape_mut(self.grad_sz).sqrt();
     self.tmp_buf.reshape_mut(self.grad_sz).reciprocal();
-    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(1.0, self.gmean.reshape(self.grad_sz));
-    self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
+    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(-self.cfg.step_size, self.grad.reshape(self.grad_sz));
+    //self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
 
-    if self.num_workers > 1 {
-      unsafe {
-        if should_update_target {
-          println!("DEBUG: updating target... rank: {} steps: {}", self.worker_rank, self.step_count());
-          volatile_copy_memory(self.async_target.as_ptr() as *mut _,  self.param.as_ptr(),  self.grad_sz);
-        }
-        volatile_copy_memory(self.async_param.as_ptr() as *mut _,     self.param.as_ptr(),  self.grad_sz);
-        if self.cfg.gamma1 < 1.0 {
-          volatile_copy_memory(self.async_gmean.as_ptr() as *mut _,   self.gmean.as_ptr(),  self.grad_sz);
-        }
-        if self.cfg.gamma2 < 1.0 {
-          volatile_copy_memory(self.async_gvar.as_ptr() as *mut _,    self.gvar.as_ptr(),   self.grad_sz);
-        }
+    unsafe {
+      //volatile_copy_memory(self.async_param.as_ptr() as *mut _,     self.param.as_ptr(),  self.grad_sz);
+      unsafe { genrl_volatile_add_f32(self.grad_sz, self.tmp_buf.as_ptr(), self.async_param.as_ptr() as *mut _) };
+      if should_update_target {
+        println!("DEBUG: updating target... rank: {} steps: {}", self.worker_rank, self.step_count());
+        volatile_copy_memory(self.async_target.as_ptr() as *mut _,  self.async_param.as_ptr(),  self.grad_sz);
       }
+      /*if self.cfg.gamma1 < 1.0 {
+        volatile_copy_memory(self.async_gmean.as_ptr() as *mut _,   self.gmean.as_ptr(),  self.grad_sz);
+      }
+      if self.cfg.gamma2 < 1.0 {
+        volatile_copy_memory(self.async_gvar.as_ptr() as *mut _,    self.gvar.as_ptr(),   self.grad_sz);
+      }*/
     }
 
     self.iter_counter += 1;
     self.iter_count.fetch_add(1, Ordering::AcqRel);
 
     let mut avg_value = 0.0;
-    //let mut avg_final_value = 0.0;
+    let mut avg_final_value = 0.0;
     for idx in 0 .. self.cfg.minibatch_sz {
       avg_value += self.base_pg.raw_actvals[idx][self.base_pg.ep_k_offsets[idx]];
-      //avg_final_value += self.base_pg.final_values[idx].unwrap_or(0.0);
+      avg_final_value += self.base_pg.final_values[idx].unwrap_or(0.0);
     }
     avg_value /= self.cfg.minibatch_sz as f32;
-    //avg_final_value /= self.cfg.minibatch_sz as f32;
-    (avg_value, value_fn_loss)
+    avg_final_value /= self.cfg.minibatch_sz as f32;
+    (avg_value, avg_final_value, value_fn_loss)
   }
 
   pub fn eval(&mut self, num_trials: usize) -> f32 {

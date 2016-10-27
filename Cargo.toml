@@ -12,6 +12,7 @@ path = "src/lib.rs"
 #path = "examples/train-cartpole.rs"
 
 [dependencies]
+genrl_kernels = { path = "kernels" }
 bit-set = "*"
 rand = "*"
 rustc-serialize = "*"
