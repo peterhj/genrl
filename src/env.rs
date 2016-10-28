@@ -9,6 +9,7 @@ use rand::{Rng};
 use std::cell::{RefCell};
 use std::fmt::{Debug};
 use std::io::{Write};
+use std::path::{Path};
 use std::rc::{Rc};
 
 pub trait Action: Clone {
@@ -339,6 +340,8 @@ pub trait Env: Default {
 
   /// Try to execute an action, returning an error if the action is illegal.
   fn step(&self, action: &Self::Action) -> Result<Option<Self::Response>, ()>;
+
+  fn _save_png(&self, path: &Path) {}
 }
 
 pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
