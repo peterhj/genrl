@@ -312,7 +312,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
     self.tmp_buf.reshape_mut(self.grad_sz).sqrt();
     self.tmp_buf.reshape_mut(self.grad_sz).reciprocal();
-    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(-self.cfg.step_size, self.grad.reshape(self.grad_sz));
+    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(self.grad.reshape(self.grad_sz));
+    self.tmp_buf.reshape_mut(self.grad_sz).scale(-self.cfg.step_size);
     //self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
 
     unsafe {

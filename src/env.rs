@@ -1,6 +1,7 @@
 //use discrete::{DiscreteSampler32};
 
 use operator::{DiffOperatorOutput};
+use rng::xorshift::*;
 use sharedmem::{RwSlice};
 
 use bit_set::{BitSet};
@@ -330,6 +331,7 @@ pub trait Env: Default {
   /// Reset the environment according to the initial state distribution and
   /// other initial configuration.
   fn reset<R>(&self, init: &Self::Init, rng: &mut R) where R: Rng + Sized;
+  //fn reset(&self, init: &Self::Init, rng: &mut Xorshiftplus128Rng);
 
   /// Check if the environment is at a terminal state (no more legal actions).
   fn is_terminal(&self) -> bool;

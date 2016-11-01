@@ -422,8 +422,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
     self.tmp_buf.reshape_mut(self.grad_sz).sqrt();
     self.tmp_buf.reshape_mut(self.grad_sz).reciprocal();
-    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(gamma1_scale, self.gmean.reshape(self.grad_sz));
-    self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
+    self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(self.gmean.reshape(self.grad_sz));
+    self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size * gamma1_scale, self.tmp_buf.reshape(self.grad_sz));
 
     let value_fn_loss = value_fn.store_loss() / steps_count as f32;
     value_fn.store_grad(&mut self.vgrad);
@@ -451,8 +451,8 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     self.tmp_buf.reshape_mut(self.vgrad_sz).add_scalar(self.cfg.epsilon * self.cfg.epsilon);
     self.tmp_buf.reshape_mut(self.vgrad_sz).sqrt();
     self.tmp_buf.reshape_mut(self.vgrad_sz).reciprocal();
-    self.tmp_buf.reshape_mut(self.vgrad_sz).elem_mult(gamma1_scale, self.vgmean.reshape(self.vgrad_sz));
-    self.vparam.reshape_mut(self.vgrad_sz).add(-self.cfg.v_step_size, self.tmp_buf.reshape(self.vgrad_sz));
+    self.tmp_buf.reshape_mut(self.vgrad_sz).elem_mult(self.vgmean.reshape(self.vgrad_sz));
+    self.vparam.reshape_mut(self.vgrad_sz).add(-self.cfg.v_step_size * gamma1_scale, self.tmp_buf.reshape(self.vgrad_sz));
 
     if self.num_workers > 1 {
       unsafe {
