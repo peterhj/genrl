@@ -143,7 +143,7 @@ where E: 'static + Env + EnvObsRepr<F>,
   target:       Vec<f32>,
   param:        Vec<f32>,
   grad:         Vec<f32>,
-  //grad_acc:     Vec<f32>,
+  grad_acc:     Vec<f32>,
   grad_var_acc: Vec<f32>,
   tmp_buf:      Vec<f32>,
   trace_file:   BufWriter<File>,
@@ -161,7 +161,7 @@ where E: 'static + Env + EnvObsRepr<F>,
   pub fn new(cfg: AdamDiffQConfig<E::Init, V::Cfg, EvalV::Cfg>, value_fn: Rc<RefCell<ValueFn>>, target_fn: Rc<RefCell<ValueFn>>) -> Self {
     let grad_sz = value_fn.borrow_mut().diff_param_sz();
     let mut rng = Xorshiftplus128Rng::new(&mut thread_rng());
-    rng.set_state(&[1234_5678, 1234_5678]); // FIXME(20161029): for debugging.
+    //rng.set_state(&[1234_5678, 1234_5678]); // FIXME(20161029): for debugging.
     let replay_cache = LinearReplayCache::new(cfg.history_len, E::_obs_shape3d(), cfg.replay_sz);
     let env = Rc::new(E::default());
     //env.reset(&cfg.init_cfg, &mut rng);
@@ -178,8 +178,8 @@ where E: 'static + Env + EnvObsRepr<F>,
     param.resize(grad_sz, 0.0);
     let mut grad = Vec::with_capacity(grad_sz);
     grad.resize(grad_sz, 0.0);
-    /*let mut grad_acc = Vec::with_capacity(grad_sz);
-    grad_acc.resize(grad_sz, 0.0);*/
+    let mut grad_acc = Vec::with_capacity(grad_sz);
+    grad_acc.resize(grad_sz, 0.0);
     let mut grad_var_acc = Vec::with_capacity(grad_sz);
     grad_var_acc.resize(grad_sz, 0.0);
     let mut tmp_buf = Vec::with_capacity(grad_sz);
@@ -210,7 +210,7 @@ where E: 'static + Env + EnvObsRepr<F>,
       target:       target,
       param:        param,
       grad:         grad,
-      //grad_acc:     grad_acc,
+      grad_acc:     grad_acc,
       grad_var_acc: grad_var_acc,
       tmp_buf:      tmp_buf,
       trace_file:   BufWriter::new(File::create("trace.log").unwrap()),
@@ -365,7 +365,8 @@ where E: 'static + Env + EnvObsRepr<F>,
     let mut value_fn = self.value_fn.borrow_mut();
     let mut target_fn = self.target_fn.borrow_mut();
 
-    /*let mut param_file = File::open("init_param.bin").unwrap();
+    /*//let mut param_file = File::open(&format!("saved_record/pong_init_param.bin")).unwrap();
+    let mut param_file = File::open(&format!("init_param.bin")).unwrap();
     let mut raw_param_buf = vec![];
     param_file.read_to_end(&mut raw_param_buf).unwrap();
     let mut param_buf = unsafe { from_raw_parts_mut(raw_param_buf.as_mut_ptr() as *mut _, raw_param_buf.len() / 4) };
@@ -373,19 +374,11 @@ where E: 'static + Env + EnvObsRepr<F>,
     value_fn.load_diff_param(&mut param_buf);
     self.param.copy_from_slice(&param_buf);*/
 
-    //let mut param_file = File::open(&format!("saved_record/pong_init_param.bin")).unwrap();
-    let mut param_file = File::open(&format!("init_param.bin")).unwrap();
-    let mut raw_param_buf = vec![];
-    param_file.read_to_end(&mut raw_param_buf).unwrap();
-    let mut param_buf = unsafe { from_raw_parts_mut(raw_param_buf.as_mut_ptr() as *mut _, raw_param_buf.len() / 4) };
-    assert_eq!(self.grad_sz, param_buf.len());
-    value_fn.load_diff_param(&mut param_buf);
-    self.param.copy_from_slice(&param_buf);
+    value_fn.init_param(rng);
+    value_fn.store_diff_param(&mut self.param);
 
-    //value_fn.init_param(rng);
-    //value_fn.store_diff_param(&mut self.param);
-
-    /*let mut param_file = File::open("init_target_param.bin").unwrap();
+    /*//let mut param_file = File::open(&format!("saved_record/pong_init_target.bin")).unwrap();
+    let mut param_file = File::open(&format!("init_target_param.bin")).unwrap();
     let mut raw_param_buf = vec![];
     param_file.read_to_end(&mut raw_param_buf).unwrap();
     let mut param_buf = unsafe { from_raw_parts_mut(raw_param_buf.as_mut_ptr() as *mut _, raw_param_buf.len() / 4) };
@@ -393,17 +386,8 @@ where E: 'static + Env + EnvObsRepr<F>,
     target_fn.load_diff_param(&mut param_buf);
     self.target.copy_from_slice(&param_buf);*/
 
-    //let mut param_file = File::open(&format!("saved_record/pong_init_target.bin")).unwrap();
-    let mut param_file = File::open(&format!("init_target_param.bin")).unwrap();
-    let mut raw_param_buf = vec![];
-    param_file.read_to_end(&mut raw_param_buf).unwrap();
-    let mut param_buf = unsafe { from_raw_parts_mut(raw_param_buf.as_mut_ptr() as *mut _, raw_param_buf.len() / 4) };
-    assert_eq!(self.grad_sz, param_buf.len());
-    target_fn.load_diff_param(&mut param_buf);
-    self.target.copy_from_slice(&param_buf);
-
-    //target_fn.init_param(rng);
-    //target_fn.store_diff_param(&mut self.target);
+    target_fn.init_param(rng);
+    target_fn.store_diff_param(&mut self.target);
 
     //self.target.copy_from_slice(&self.param);
     //target_fn.load_diff_param(&mut self.target);
@@ -522,8 +506,8 @@ where E: 'static + Env + EnvObsRepr<F>,
         self.avg_value += (v.to_scalar() - self.avg_value) / self.epoch_ep_cnt as f32;
         self.min_value = self.min_value.min(v.to_scalar());
         self.max_value = self.max_value.max(v.to_scalar());
-        println!("DEBUG: dq: stats: steps: {} episodes: {} {:.3} {:.3} {:.3}",
-            self.step_count(), self.epoch_ep_cnt, self.avg_value, self.min_value, self.max_value);
+        println!("DEBUG: dq: stats: steps: {} episodes: {} {:.3} {:.3} {:.3} {}",
+            self.step_count(), self.epoch_ep_cnt, self.avg_value, self.min_value, self.max_value, v.to_scalar());
       }
 
       if self.step_count % self.cfg.target_steps == 0 {
@@ -563,7 +547,8 @@ where E: 'static + Env + EnvObsRepr<F>,
         let mut value_fn = self.value_fn.borrow_mut();
         let mut target_fn = self.target_fn.borrow_mut();
 
-        value_fn.reset_loss();
+        // XXX: double Q-learning.
+        /*value_fn.reset_loss();
         value_fn.reset_grad();
         value_fn.next_iteration();
         self.cache.clear();
@@ -589,7 +574,7 @@ where E: 'static + Env + EnvObsRepr<F>,
           let value_output = &value_fn._get_pred()[idx * action_dim .. (idx+1) * action_dim];
           let argmax_k = argmax(value_output.iter().map(|&v| F32InfNan(v))).unwrap();
           self.target_maxs.push(argmax_k);
-        }
+        }*/
 
         target_fn.load_diff_param(&mut self.target);
         target_fn.reset_loss();
@@ -622,8 +607,8 @@ where E: 'static + Env + EnvObsRepr<F>,
             continue;
           }
           let target_output = &target_fn._get_pred()[idx * action_dim .. (idx+1) * action_dim];
-          //let argmax_k = argmax(target_output.iter().map(|&v| F32InfNan(v))).unwrap();
-          let argmax_k = self.target_maxs[idx];
+          let argmax_k = argmax(target_output.iter().map(|&v| F32InfNan(v))).unwrap();
+          //let argmax_k = self.target_maxs[idx]; // XXX: double Q-learning.
           self.target_vals.push(target_output[argmax_k]);
           avg_target_val += target_output[argmax_k];
         }
@@ -687,8 +672,8 @@ where E: 'static + Env + EnvObsRepr<F>,
 
         self.tmp_buf.copy_from_slice(&self.grad);
         self.tmp_buf.reshape_mut(self.grad_sz).square();
-        self.grad_var_acc.reshape_mut(self.grad_sz).scale(self.cfg.rms_decay);
-        self.grad_var_acc.reshape_mut(self.grad_sz).add(1.0 - self.cfg.rms_decay, self.tmp_buf.reshape(self.grad_sz));
+        //self.grad_var_acc.reshape_mut(self.grad_sz).scale(self.cfg.rms_decay);
+        self.grad_var_acc.reshape_mut(self.grad_sz).average(1.0 - self.cfg.rms_decay, self.tmp_buf.reshape(self.grad_sz));
         //self.grad_var_acc.reshape_mut(self.grad_sz).average(self.cfg.gamma2, self.tmp_buf.reshape(self.grad_sz));
 
         self.tmp_buf.copy_from_slice(&self.grad_var_acc);
@@ -696,11 +681,15 @@ where E: 'static + Env + EnvObsRepr<F>,
         self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon);
         self.tmp_buf.reshape_mut(self.grad_sz).sqrt();
         // XXX(20161027): The following is a Neon quirk.
-        self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon);
+        //self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon);
         /*self.tmp_buf.reshape_mut(self.grad_sz).reciprocal();
         self.tmp_buf.reshape_mut(self.grad_sz).elem_mult(self.grad.reshape(self.grad_sz));*/
         self.tmp_buf.reshape_mut(self.grad_sz).elem_ldiv(self.grad.reshape(self.grad_sz));
-        self.param.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
+
+        self.grad_acc.reshape_mut(self.grad_sz).scale(0.95);
+        self.grad_acc.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
+
+        self.param.reshape_mut(self.grad_sz).add(1.0, self.grad_acc.reshape(self.grad_sz));
 
         /*let mut param_file = File::open(&format!("saved_record/pong_epoch_0_bin/param_step_{}.bin", self.step_count)).unwrap();
         let mut raw_param_buf = vec![];
