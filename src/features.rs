@@ -1,13 +1,14 @@
 use env::{Env};
 
 use operator::prelude::*;
+use rng::xorshift::{Xorshiftplus128Rng};
 
 use std::collections::{VecDeque};
 use std::rc::{Rc};
 
 pub trait EnvObsRepr<F>: Env {
   fn _obs_shape3d() -> (usize, usize, usize);
-  fn observe(&self) -> F;
+  fn observe(&self, rng: &mut Xorshiftplus128Rng) -> F;
 }
 
 pub struct BeliefState<F> {
@@ -64,5 +65,23 @@ impl<F> SampleExtractInput<[f32]> for BeliefState<F> where F: SampleExtractInput
       }
     }
     Ok(offset)
+  }
+}
+
+//impl<F, Shape> SampleInputShape<Shape> for BeliefState<F> where F: SampleInputShape<Shape>, Shape: PartialEq + Eq {
+impl<F> SampleInputShape<(usize, usize, usize)> for BeliefState<F> where F: SampleInputShape<(usize, usize, usize)> {
+  fn input_shape(&self) -> Option<(usize, usize, usize)> {
+    let mut shape = None;
+    for obs in self.obs_reprs.iter() {
+      let obs_shape = match obs.input_shape() {
+        None => continue,
+        Some(shape) => shape,
+      };
+      match shape {
+        None => shape = Some(obs_shape),
+        Some(ref prev_shape) => if prev_shape != &obs_shape { panic!(); },
+      }
+    }
+    shape.map(|(w, h, c)| (w, h, c * self.obs_reprs.len()))
   }
 }

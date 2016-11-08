@@ -19,6 +19,5 @@ pub mod examples;
 pub mod features;
 pub mod kernels;
 pub mod opt;
-//pub mod replay;
-pub mod replay_new;
+pub mod replay;
 //pub mod wrappers;

@@ -4,5 +4,6 @@ pub mod a3c;
 pub mod aac_new;
 pub mod adq;
 pub mod dq;
+pub mod dq_new;
 pub mod pg;
 pub mod pg_new;
