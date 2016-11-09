@@ -80,7 +80,8 @@ impl<F, Action, Res> LinearReplayCache<F, Action, Res> where Action: Copy, Res: 
       idx = rng.gen_range(0, self.frames.len());
       let last_idx = (self.frames.len() + self.head - 1) % self.frames.len();
       let first_valid_idx = (self.frames.len() + last_idx - (self.frames.len() - 1) + self.history_len) % self.frames.len();
-      if idx >= first_valid_idx || idx <= last_idx {
+      if (first_valid_idx < last_idx && idx >= first_valid_idx && idx <= last_idx) ||
+          (last_idx < first_valid_idx && (idx >= first_valid_idx || idx <= last_idx)) {
         for offset in 0 .. self.history_len {
           let offset_idx = (self.frames.len() + idx - self.history_len + offset) % self.frames.len();
           if self.frames[offset_idx].terminal {

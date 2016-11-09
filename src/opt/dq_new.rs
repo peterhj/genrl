@@ -235,6 +235,7 @@ where E: 'static + Env + EnvObsRepr<F>,
 
     value_fn.init_param(rng);
     value_fn.store_diff_param(&mut self.param);
+    self.update_step.load_param(&mut self.param);
 
     target_fn.init_param(rng);
     target_fn.store_diff_param(&mut self.target);
@@ -257,8 +258,8 @@ where E: 'static + Env + EnvObsRepr<F>,
 
     {
       let mut value_fn = self.value_fn.borrow_mut();
-      //value_fn.load_diff_param(&mut self.param);
-      self.update_step.pre_step(&mut *value_fn);
+      value_fn.load_diff_param(&mut self.param);
+      //self.update_step.pre_step(&mut *value_fn);
     }
 
     let mut step_res = vec![];
@@ -441,37 +442,15 @@ where E: 'static + Env + EnvObsRepr<F>,
         }
         assert!(!self.cache.is_empty());
         avg_value /= self.cfg.minibatch_sz as f32;
+        self.update_step.pre_step(&mut *value_fn);
         value_fn.load_batch(&self.cache);
         value_fn.forward(OpPhase::Learning);
         value_fn.backward();
 
         //let avg_loss = value_fn.store_loss() / self.cfg.minibatch_sz as f32;
 
-        //value_fn.update_nondiff_param(self.iter_count);
         self.update_step.step(self.cfg.minibatch_sz, self.iter_count, &mut *value_fn);
         self.update_step.save_param(&mut self.param);
-
-        /*value_fn.store_grad(&mut self.grad);
-        self.grad.reshape_mut(self.grad_sz).div_scalar(self.cfg.minibatch_sz as f32);
-        for &g in self.grad.iter() {
-          assert!(!g.is_nan());
-        }
-
-        self.tmp_buf.copy_from_slice(&self.grad);
-        self.tmp_buf.reshape_mut(self.grad_sz).square();
-        self.grad_var_acc.reshape_mut(self.grad_sz).average(1.0 - self.cfg.rms_decay, self.tmp_buf.reshape(self.grad_sz));
-
-        let rms_decay_scale = 1.0 / (1.0 - self.cfg.rms_decay.powi((self.iter_count + 1) as i32));
-        self.tmp_buf.copy_from_slice(&self.grad_var_acc);
-        self.tmp_buf.reshape_mut(self.grad_sz).scale(rms_decay_scale);
-        self.tmp_buf.reshape_mut(self.grad_sz).add_scalar(self.cfg.epsilon);
-        self.tmp_buf.reshape_mut(self.grad_sz).sqrt();
-        self.tmp_buf.reshape_mut(self.grad_sz).elem_ldiv(self.grad.reshape(self.grad_sz));
-
-        self.update_acc.reshape_mut(self.grad_sz).scale(self.cfg.momentum);
-        self.update_acc.reshape_mut(self.grad_sz).add(-self.cfg.step_size, self.tmp_buf.reshape(self.grad_sz));
-
-        self.param.reshape_mut(self.grad_sz).add(1.0, self.update_acc.reshape(self.grad_sz));*/
 
         self.iter_count += 1;
       }
