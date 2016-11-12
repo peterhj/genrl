@@ -7,8 +7,12 @@ use std::collections::{VecDeque};
 use std::rc::{Rc};
 
 pub trait EnvObsRepr<F>: Env {
-  fn _obs_shape3d() -> (usize, usize, usize);
+  fn _obs_shape3d() -> (usize, usize, usize) { unimplemented!(); }
   fn observe(&self, rng: &mut Xorshiftplus128Rng) -> F;
+}
+
+pub trait EnvObsBuf<F>: Env {
+  fn observe_buf(&self, rng: &mut Xorshiftplus128Rng, obs: &F);
 }
 
 pub struct BeliefState<F> {

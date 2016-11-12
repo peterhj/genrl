@@ -434,8 +434,26 @@ impl<E> Episode<E> where E: Env {
     self.steps.len()
   }
 
-  pub fn value(&self) -> Option<f32> {
-    self.suffixes[0].map(|r| r.as_scalar())
+  pub fn terminated(&self) -> bool {
+    match self.steps.len() {
+      0   => self.init_env.is_terminal(),
+      len => self.steps[len-1].next_env.is_terminal(),
+    }
+  }
+
+  pub fn env(&self, k: usize) -> Rc<E> {
+    match k {
+      0 => self.init_env.clone(),
+      k => self.steps[k-1].next_env.clone(),
+    }
+  }
+
+  pub fn action(&self, k: usize) -> E::Action {
+    self.steps[k].action.clone()
+  }
+
+  pub fn response(&self, k: usize) -> Option<E::Response> {
+    self.steps[k].res
   }
 
   pub fn reset<R>(&mut self, init_cfg: &E::Init, rng: &mut R) where R: Rng + Sized {
@@ -444,18 +462,23 @@ impl<E> Episode<E> where E: Env {
     self.suffixes.clear();
   }
 
-  pub fn terminated(&self) -> bool {
-    match self.steps.len() {
-      0   => self.init_env.is_terminal(),
-      len => self.steps[len-1].next_env.is_terminal(),
-    }
+  pub fn append(&mut self, action: E::Action, res: Option<E::Response>, next_env: Rc<E>) {
+    self.steps.push(EpisodeStep{
+      action:   action,
+      res:      res,
+      next_env: next_env,
+    });
+  }
+
+  #[deprecated] pub fn value(&self) -> Option<f32> {
+    self.suffixes[0].map(|r| r.as_scalar())
   }
 
   /*pub fn set_final_value(&mut self, v: E::Response) {
     self.final_value = Some(v);
   }*/
 
-  pub fn _fill_suffixes(&mut self) {
+  #[deprecated] pub fn _fill_suffixes(&mut self) {
     let horizon = self.steps.len();
     self.suffixes.clear();
     for k in 0 .. horizon {
@@ -479,7 +502,7 @@ impl<E> Episode<E> where E: Env {
     }
   }
 
-  pub fn _value(&self) -> Option<f32> {
+  #[deprecated] pub fn _value(&self) -> Option<f32> {
     if !self.suffixes.is_empty() {
       assert_eq!(self.steps.len(), self.suffixes.len());
       self.suffixes[0].map(|r| r.as_scalar())
