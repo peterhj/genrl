@@ -158,7 +158,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn sample_epsilon_greedy<ValueFn, R>(&mut self, max_horizon: Option<usize>, max_num_steps: Option<usize>, init_cfg: &E::Init, eps_greedy: f32, value_fn: &mut ValueFn, rng: &mut R)
   where R: Rng,
-        ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
+        ValueFn: DiffLoss<SampleItem, [f32]>,
   {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
@@ -268,7 +268,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
 
   pub fn sample_steps<Policy, R>(&mut self, max_horizon: Option<usize>, max_num_steps: Option<usize>, init_cfg: &E::Init, policy: &mut Policy, rng: &mut R)
   where R: Rng,
-        Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+        Policy: DiffLoss<SampleItem, [f32]> //+ StochasticPolicy,
   {
     let action_dim = <E::Action as Action>::dim();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
@@ -407,7 +407,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn impute_baselines<ValueFn>(&mut self, max_num_steps: Option<usize>, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+  pub fn impute_baselines<ValueFn>(&mut self, max_num_steps: Option<usize>, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, [f32]> {
     for (idx, episode) in self.episodes.iter().enumerate() {
       //self.baseline_val[idx].clear();
       self.baseline_val[idx].resize(episode.horizon(), 0.0);
@@ -463,7 +463,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn impute_final_values<ValueFn>(&mut self, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+  pub fn impute_final_values<ValueFn>(&mut self, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, [f32]> {
     self.cache.clear();
     self.cache_idxs.clear();
     for (idx, episode) in self.episodes.iter_mut().enumerate() {
@@ -499,7 +499,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
     }
   }
 
-  pub fn impute_final_q_values<ValueFn>(&mut self, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, IoBuf=[f32]> {
+  pub fn impute_final_q_values<ValueFn>(&mut self, value_fn: &mut ValueFn) where ValueFn: DiffLoss<SampleItem, [f32]> {
     let action_dim = <E::Action as Action>::dim();
     self.cache.clear();
     self.cache_idxs.clear();
@@ -554,7 +554,7 @@ pub struct SgdPolicyGradWorker<E, V, Policy>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+      Policy: DiffLoss<SampleItem, [f32]> //+ StochasticPolicy,
 {
   cfg:      PolicyGradConfig<E, V>,
   grad_sz:  usize,
@@ -571,7 +571,7 @@ impl<E, V, Policy> SgdPolicyGradWorker<E, V, Policy>
 where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
-      Policy: DiffLoss<SampleItem, IoBuf=[f32]> //+ StochasticPolicy,
+      Policy: DiffLoss<SampleItem, [f32]> //+ StochasticPolicy,
 {
   pub fn new(cfg: PolicyGradConfig<E, V>, policy: Rc<RefCell<Policy>>) -> SgdPolicyGradWorker<E, V, Policy> {
     let batch_sz = cfg.batch_sz;

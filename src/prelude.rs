@@ -1,5 +1,5 @@
 pub use env::{
-  Action, DiscreteAction, Env, Value, Episode, EpisodeStep,
+  Action, DiscreteAction, Env, Value, SumValue, Discount, DiscountedValue, Episode, EpisodeStep,
 };
 pub use features::{
   EnvObsRepr,

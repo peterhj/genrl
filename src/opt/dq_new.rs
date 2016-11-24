@@ -69,8 +69,8 @@ where E: 'static + Env + EnvObsRepr<F>,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
       EvalV: Value<Res=E::Response>,
-      Update: StochasticUpdateStep<f32, ValueFn, SampleItem>,
-      ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
+      Update: GradUpdate<f32, ValueFn, SampleItem, [f32]>,
+      ValueFn: DiffLoss<SampleItem, [f32]>,
 {
   cfg:          DiffQConfig<E::Init, Update::Cfg, V::Cfg, EvalV::Cfg>,
   grad_sz:      usize,
@@ -111,8 +111,8 @@ where E: 'static + Env + EnvObsRepr<F>,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
       EvalV: Value<Res=E::Response>,
-      Update: StochasticUpdateStep<f32, ValueFn, SampleItem>,
-      ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
+      Update: GradUpdate<f32, ValueFn, SampleItem, [f32]>,
+      ValueFn: DiffLoss<SampleItem, [f32]>,
 {
   pub fn new(cfg: DiffQConfig<E::Init, Update::Cfg, V::Cfg, EvalV::Cfg>, value_fn: Rc<RefCell<ValueFn>>, target_fn: Rc<RefCell<ValueFn>>) -> Self {
     let grad_sz = value_fn.borrow_mut().diff_param_sz();
@@ -126,7 +126,7 @@ where E: 'static + Env + EnvObsRepr<F>,
     let target_maxs = Vec::with_capacity(cfg.minibatch_sz);
     let target_vals = Vec::with_capacity(cfg.minibatch_sz);
     let cache = Vec::with_capacity(cfg.minibatch_sz);
-    let update_step = StochasticUpdateStep::initialize(cfg.update_cfg.clone(), &mut *value_fn.borrow_mut());
+    let update_step = GradUpdate::initialize(cfg.update_cfg.clone(), &mut *value_fn.borrow_mut());
     let mut target = Vec::with_capacity(grad_sz);
     target.resize(grad_sz, 0.0);
     let mut param = Vec::with_capacity(grad_sz);
@@ -386,9 +386,9 @@ where E: 'static + Env + EnvObsRepr<F>,
         }*/
 
         target_fn.load_diff_param(&mut self.target);
+        target_fn.next_iteration();
         target_fn.reset_loss();
         target_fn.reset_grad();
-        target_fn.next_iteration();
         self.cache.clear();
         for (idx, entry) in self.samples.iter().enumerate() {
           let mut item = SampleItem::new();
@@ -417,6 +417,8 @@ where E: 'static + Env + EnvObsRepr<F>,
         }
         avg_target_val /= self.cfg.minibatch_sz as f32;
 
+        self.update_step.begin_iteration(&mut *value_fn);
+
         let mut avg_value = 0.0;
         let mut rewards = vec![];
         value_fn.save_rng_state();
@@ -442,15 +444,16 @@ where E: 'static + Env + EnvObsRepr<F>,
         }
         assert!(!self.cache.is_empty());
         avg_value /= self.cfg.minibatch_sz as f32;
-        self.update_step.pre_step(&mut *value_fn);
         value_fn.load_batch(&self.cache);
         value_fn.forward(OpPhase::Learning);
         value_fn.backward();
 
         //let avg_loss = value_fn.store_loss() / self.cfg.minibatch_sz as f32;
 
-        self.update_step.step(self.cfg.minibatch_sz, self.iter_count, &mut *value_fn);
+        self.update_step.end_iteration(self.cfg.minibatch_sz, &mut *value_fn);
+        self.update_step.step(self.iter_count, &mut *value_fn);
         self.update_step.save_param(&mut self.param);
+        value_fn.update_nondiff_param(self.iter_count);
 
         self.iter_count += 1;
       }

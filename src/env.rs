@@ -1,8 +1,4 @@
-//use discrete::{DiscreteSampler32};
-
-use operator::{DiffOperatorOutput};
 use rng::xorshift::*;
-use sharedmem::{RwSlice};
 
 use bit_set::{BitSet};
 

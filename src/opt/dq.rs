@@ -114,7 +114,7 @@ where E: 'static + Env + EnvObsRepr<F>,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
       EvalV: Value<Res=E::Response>,
-      ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
+      ValueFn: DiffLoss<SampleItem, [f32]>,
 {
   cfg:          RmspropDiffQConfig<E::Init, V::Cfg, EvalV::Cfg>,
   grad_sz:      usize,
@@ -155,7 +155,7 @@ where E: 'static + Env + EnvObsRepr<F>,
       E::Action: DiscreteAction,
       V: Value<Res=E::Response>,
       EvalV: Value<Res=E::Response>,
-      ValueFn: DiffLoss<SampleItem, IoBuf=[f32]>,
+      ValueFn: DiffLoss<SampleItem, [f32]>,
 {
   pub fn new(cfg: RmspropDiffQConfig<E::Init, V::Cfg, EvalV::Cfg>, value_fn: Rc<RefCell<ValueFn>>, target_fn: Rc<RefCell<ValueFn>>) -> Self {
     let grad_sz = value_fn.borrow_mut().diff_param_sz();
