@@ -247,6 +247,52 @@ impl<T> BinaryHeap<T> {
 }
 
 #[derive(Clone)]
+pub struct SlowDiscreteDist32 {
+  weights:  Vec<f32>,
+  cweights: Vec<f32>,
+  sum:      f32,
+}
+
+impl SlowDiscreteDist32 {
+  pub fn new(len: usize) -> SlowDiscreteDist32 {
+    let mut weights = Vec::with_capacity(len);
+    weights.resize(len, 0.0);
+    let mut cweights = Vec::with_capacity(len);
+    cweights.resize(len, 0.0);
+    SlowDiscreteDist32{
+      weights:  weights,
+      cweights: cweights,
+      sum:      0.0,
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.weights.len()
+  }
+
+  pub fn reset(&mut self, new_weights: &[f32]) -> Result<(), ()> {
+    self.weights.copy_from_slice(new_weights);
+    let mut s = 0.0;
+    for j in 0 .. self.weights.len() {
+      s += self.weights[j];
+      self.cweights[j] = s;
+    }
+    self.sum = s;
+    Ok(())
+  }
+
+  pub fn try_sample<R>(&mut self, rng: &mut R) -> Option<usize> where R: Rng {
+    let u = rng.gen_range(0.0, self.sum);
+    for j in 0 .. self.weights.len() {
+      if u < self.cweights[j] {
+        return Some(j);
+      }
+    }
+    None
+  }
+}
+
+#[derive(Clone)]
 pub struct DiscreteDist32 {
   len:      usize,
   zeros:    BitVec64,

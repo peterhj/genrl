@@ -282,7 +282,7 @@ where E: 'static + Env + EnvObsRepr<F>,
       } else {
         let mut item = SampleItem::new();
         let obs = Rc::new(self.belief_state.clone());
-        let obs_dim = obs._shape3d();
+        //let obs_dim = obs._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
         item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
         self.cache.clear();
@@ -393,7 +393,7 @@ where E: 'static + Env + EnvObsRepr<F>,
         for (idx, entry) in self.samples.iter().enumerate() {
           let mut item = SampleItem::new();
           let obs = Rc::new(entry.next.clone());
-          let obs_dim = obs._shape3d();
+          //let obs_dim = obs._shape3d();
           item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
           item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
           self.cache.push(item);
@@ -429,7 +429,7 @@ where E: 'static + Env + EnvObsRepr<F>,
         for (idx, entry) in self.samples.iter().enumerate() {
           let mut item = SampleItem::new();
           let obs = Rc::new(entry.prev.clone());
-          let obs_dim = obs._shape3d();
+          //let obs_dim = obs._shape3d();
           let act_idx = entry.action.idx();
           let mut action_value = V::from_scalar(self.target_vals[idx], self.cfg.value_cfg);
           action_value.lreduce(entry.res.unwrap());
@@ -452,7 +452,8 @@ where E: 'static + Env + EnvObsRepr<F>,
 
         self.update_step.end_iteration(self.cfg.minibatch_sz, &mut *value_fn);
         self.update_step.step(self.iter_count, &mut *value_fn);
-        self.update_step.save_param(&mut self.param);
+        //self.update_step.save_param(&mut self.param);
+        value_fn.store_diff_param(&mut self.param);
         value_fn.update_nondiff_param(self.iter_count);
 
         self.iter_count += 1;

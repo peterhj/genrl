@@ -6,4 +6,4 @@
 pub mod dq;
 pub mod dq_new;
 //pub mod pg;
-pub mod pg_new;
+pub mod pg_new; // FIXME(20161214): disabled because of `InputShape3dKey`.

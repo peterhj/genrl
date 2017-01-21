@@ -196,7 +196,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         let env_repr_dim = prev_env._shape3d();
         let mut item = SampleItem::new();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
-        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+        item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
         self.cache.push(item);
         self.cache_idxs.push(idx);
       }
@@ -306,7 +306,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         };
         let env_repr_dim = prev_env._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
-        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+        item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
         self.cache.push(item);
         self.cache_idxs.push(idx);
       }
@@ -430,7 +430,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         };
         let env_repr_dim = prev_env._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
-        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+        item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
         self.cache.push(item);
         self.cache_idxs.push(idx);
       }
@@ -478,7 +478,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       let mut item = SampleItem::new();
       let env_repr_dim = prev_env._shape3d();
       item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
-      item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+      item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
       self.cache.push(item);
       self.cache_idxs.push(idx);
     }
@@ -515,7 +515,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
       let mut item = SampleItem::new();
       let env_repr_dim = prev_env._shape3d();
       item.kvs.insert::<SampleExtractInputKey<[f32]>>(prev_env.clone());
-      item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+      item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
       self.cache.push(item);
       self.cache_idxs.push(idx);
     }
@@ -623,7 +623,7 @@ where E: 'static + Env + EnvInputRepr<[f32]> + SampleExtractInput<[f32]> + Clone
         };
         let env_repr_dim = env._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(env);
-        item.kvs.insert::<SampleInputShape3dKey>(env_repr_dim);
+        item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(Rc::new(env_repr_dim));
         item.kvs.insert::<SampleClassLabelKey>(episode.steps[k].action.idx());
         item.kvs.insert::<SampleWeightKey>(self.base_pg.raw_actvals[idx][k] - self.cfg.baseline);
         self.cache.push(item);

@@ -59,6 +59,19 @@ impl<F> BeliefState<F> {
   }
 }
 
+impl<F> SampleExtractInput<[u8]> for BeliefState<F> where F: SampleExtractInput<[u8]> {
+  fn extract_input(&self, output: &mut [u8]) -> Result<usize, ()> {
+    let mut offset = 0;
+    for obs in self.obs_reprs.iter() {
+      match obs.extract_input(&mut output[offset .. ]) {
+        Err(_) => return Err(()),
+        Ok(count) => offset += count,
+      }
+    }
+    Ok(offset)
+  }
+}
+
 impl<F> SampleExtractInput<[f32]> for BeliefState<F> where F: SampleExtractInput<[f32]> {
   fn extract_input(&self, output: &mut [f32]) -> Result<usize, ()> {
     let mut offset = 0;

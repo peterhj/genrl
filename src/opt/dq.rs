@@ -275,7 +275,7 @@ where E: 'static + Env + EnvObsRepr<F>,
         let obs_dim = obs._shape3d();
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
         item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
-        item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
+        //item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
         self.cache.clear();
         self.cache.push(item);
         let mut value_fn = self.value_fn.borrow_mut();
@@ -454,7 +454,7 @@ where E: 'static + Env + EnvObsRepr<F>,
         //println!("DEBUG: update (step): obs dim: {:?}", obs_dim);
         item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
         item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
-        item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
+        //item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
         self.cache.clear();
         self.cache.push(item);
         let mut value_fn = self.value_fn.borrow_mut();
@@ -590,7 +590,7 @@ where E: 'static + Env + EnvObsRepr<F>,
           }*/
           item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
           item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
-          item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
+          //item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
           self.cache.push(item);
         }
         target_fn.load_batch(&self.cache);
@@ -635,7 +635,7 @@ where E: 'static + Env + EnvObsRepr<F>,
           avg_value += act_val;
           item.kvs.insert::<SampleExtractInputKey<[f32]>>(obs.clone());
           item.kvs.insert::<SampleInputShapeKey<(usize, usize, usize)>>(obs.clone());
-          item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
+          //item.kvs.insert::<SampleInputShape3dKey>(obs_dim);
           item.kvs.insert::<SampleRegressTargetKey>(act_val);
           item.kvs.insert::<SampleClassLabelKey>(act_idx);
           self.cache.push(item);
