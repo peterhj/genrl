@@ -645,8 +645,9 @@ where E: 'static + Env + EnvObsRepr<F>,
         value_fn.forward(OpPhase::Learning);
         value_fn.backward();
         value_fn.update_nondiff_param(self.iter_count);
+        value_fn.store_loss();
 
-        let avg_loss = value_fn.store_loss() / self.cfg.minibatch_sz as f32;
+        let avg_loss = value_fn.get_loss() / self.cfg.minibatch_sz as f32;
         value_fn.store_grad(&mut self.grad);
         self.grad.reshape_mut(self.grad_sz).div_scalar(self.cfg.minibatch_sz as f32);
         for &g in self.grad.iter() {
