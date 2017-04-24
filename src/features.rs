@@ -1,10 +1,13 @@
 use env::{Env};
 
+use densearray::prelude::*;
 use operator::prelude::*;
 use rng::xorshift::{Xorshiftplus128Rng};
 
+use rand::{Rng};
 use std::collections::{VecDeque};
 use std::rc::{Rc};
+use std::sync::{Arc};
 
 pub trait EnvObsRepr<F>: Env {
   fn _obs_shape3d() -> (usize, usize, usize) { unimplemented!(); }
@@ -17,7 +20,115 @@ pub trait EnvObsBuf<F>: Env {
 
 pub struct BeliefState<F> {
   pub history_len:  Option<usize>,
-  pub frame_dim:    (usize, usize, usize),
+  pub obs_reprs:    VecDeque<Rc<F>>,
+}
+
+impl<F> Clone for BeliefState<F> {
+  fn clone(&self) -> Self {
+    BeliefState{
+      history_len:  self.history_len,
+      obs_reprs:    self.obs_reprs.clone(),
+    }
+  }
+}
+
+impl<F> BeliefState<F> {
+  pub fn new(history_len: Option<usize>) -> BeliefState<F> {
+    BeliefState{
+      history_len:  history_len,
+      obs_reprs:    VecDeque::new(),
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.obs_reprs.len()
+  }
+
+  pub fn reset(&mut self) {
+    self.obs_reprs.clear();
+  }
+
+  pub fn push(&mut self, obs: Rc<F>) {
+    if let Some(cap) = self.history_len {
+      assert!(self.obs_reprs.len() <= cap);
+      if self.obs_reprs.len() == cap {
+        let _ = self.obs_reprs.pop_front();
+      }
+    }
+    self.obs_reprs.push_back(obs);
+  }
+}
+
+impl<F> Extract<[u8]> for BeliefState<F> where F: Extract<[u8]> {
+  fn extract(&self, output: &mut [u8]) -> Result<usize, ()> {
+    let mut offset = 0;
+    for obs in self.obs_reprs.iter() {
+      match obs.extract(&mut output[offset .. ]) {
+        Err(_)    => return Err(()),
+        Ok(count) => offset += count,
+      }
+    }
+    Ok(offset)
+  }
+}
+
+pub struct SharedBeliefState<F> {
+  pub history_len:  Option<usize>,
+  pub obs_reprs:    VecDeque<Arc<F>>,
+}
+
+impl<F> Clone for SharedBeliefState<F> {
+  fn clone(&self) -> Self {
+    SharedBeliefState{
+      history_len:  self.history_len,
+      obs_reprs:    self.obs_reprs.clone(),
+    }
+  }
+}
+
+impl<F> SharedBeliefState<F> {
+  pub fn new(history_len: Option<usize>) -> SharedBeliefState<F> {
+    SharedBeliefState{
+      history_len:  history_len,
+      obs_reprs:    VecDeque::new(),
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.obs_reprs.len()
+  }
+
+  pub fn reset(&mut self) {
+    self.obs_reprs.clear();
+  }
+
+  pub fn push(&mut self, obs: Arc<F>) {
+    if let Some(cap) = self.history_len {
+      assert!(self.obs_reprs.len() <= cap);
+      if self.obs_reprs.len() == cap {
+        let _ = self.obs_reprs.pop_front();
+      }
+    }
+    self.obs_reprs.push_back(obs);
+  }
+}
+
+impl<F> Extract<[u8]> for SharedBeliefState<F> where F: Extract<[u8]> {
+  fn extract(&self, output: &mut [u8]) -> Result<usize, ()> {
+    let mut offset = 0;
+    for obs in self.obs_reprs.iter() {
+      match obs.extract(&mut output[offset .. ]) {
+        Err(_)    => return Err(()),
+        Ok(count) => offset += count,
+      }
+    }
+    Ok(offset)
+  }
+}
+
+/*pub struct BeliefState<F> {
+  pub history_len:  Option<usize>,
+  //pub frame_dim:    (usize, usize, usize),
   //pub obs_reprs:    VecDeque<Rc<F>>,
   pub obs_reprs:    Vec<Rc<F>>,
   frame_counter:    usize,
@@ -28,7 +139,7 @@ impl<F> Clone for BeliefState<F> {
   fn clone(&self) -> Self {
     BeliefState{
       history_len:  self.history_len,
-      frame_dim:    self.frame_dim,
+      //frame_dim:    self.frame_dim,
       obs_reprs:    self.obs_reprs.clone(),
       frame_counter:    self.frame_counter,
       frame_length:     self.frame_length,
@@ -37,10 +148,10 @@ impl<F> Clone for BeliefState<F> {
 }
 
 impl<F> BeliefState<F> {
-  pub fn new(history_len: Option<usize>, frame_dim: (usize, usize, usize)) -> BeliefState<F> {
+  pub fn new(history_len: Option<usize>, /*frame_dim: (usize, usize, usize)*/) -> BeliefState<F> {
     BeliefState{
       history_len:  history_len,
-      frame_dim:    frame_dim,
+      //frame_dim:    frame_dim,
       //obs_reprs:    VecDeque::new(),
       obs_reprs:    Vec::with_capacity(history_len.unwrap_or(4)),
       frame_counter:    0,
@@ -83,8 +194,33 @@ impl<F> BeliefState<F> {
     //self.obs_reprs.push_back(obs);
   }
 
-  pub fn _shape3d(&self) -> (usize, usize, usize) {
+  /*pub fn _shape3d(&self) -> (usize, usize, usize) {
     (self.frame_dim.0, self.frame_dim.1, self.obs_reprs.len() * self.frame_dim.2)
+  }*/
+}
+
+impl<F> Extract<[u8]> for BeliefState<F> where F: Extract<[u8]> {
+  fn extract(&self, output: &mut [u8]) -> Result<usize, ()> {
+    let mut offset = 0;
+    /*for obs in self.obs_reprs.iter() {
+      match obs.extract_input(&mut output[offset .. ]) {
+        Err(_) => return Err(()),
+        Ok(count) => offset += count,
+      }
+    }*/
+    for frame_idx in 0 .. self.frame_length {
+      let frame_offset =
+          if let Some(cap) = self.history_len {
+            (self.frame_counter + cap - self.frame_length + 1) % cap
+          } else {
+            frame_idx
+          };
+      match self.obs_reprs[frame_offset].extract(&mut output[offset .. ]) {
+        Err(_) => panic!(),
+        Ok(count) => offset += count,
+      }
+    }
+    Ok(offset)
   }
 }
 
@@ -143,7 +279,9 @@ impl<F> SampleInputShape<(usize, usize, usize)> for BeliefState<F> where F: Samp
       }
     }
     shape.map(|(w, h, c)| (w, h, c * self.obs_reprs.len()))*/
-    let (w, h, c) = self.frame_dim;
-    Some((w, h, c * self.frame_length))
+
+    /*let (w, h, c) = self.frame_dim;
+    Some((w, h, c * self.frame_length))*/
+    unimplemented!();
   }
-}
+}*/

@@ -23,24 +23,32 @@ pub struct ReplayEntry<F, Action, Res> {
 
 pub struct LinearReplayCache<F, Action, Res> {
   history_len:  usize,
-  frame_dim:    (usize, usize, usize),
+  //frame_dim:    (usize, usize, usize),
   capacity:     usize,
   head:         usize,
   frames:       Vec<ReplayFrame<F, Action, Res>>,
 }
 
 impl<F, Action, Res> LinearReplayCache<F, Action, Res> where Action: Copy, Res: Copy {
-  pub fn new(history_len: usize, frame_dim: (usize, usize, usize), capacity: usize) -> Self {
+  pub fn new(history_len: usize, /*frame_dim: (usize, usize, usize),*/ capacity: usize) -> Self {
     LinearReplayCache{
       history_len:  history_len,
-      frame_dim:    frame_dim,
+      //frame_dim:    frame_dim,
       capacity:     capacity,
       head:         0,
       frames:       Vec::with_capacity(capacity),
     }
   }
 
+  pub fn len(&self) -> usize {
+    self.frames.len()
+  }
+
   pub fn insert(&mut self, action: Action, res: Option<Res>, next_obs: Rc<F>, terminal: bool) {
+    self.push(action, res, next_obs, terminal);
+  }
+
+  pub fn push(&mut self, action: Action, res: Option<Res>, next_obs: Rc<F>, terminal: bool) {
     let new_frame = ReplayFrame{
       action:   action,
       res:      res,
@@ -58,7 +66,7 @@ impl<F, Action, Res> LinearReplayCache<F, Action, Res> where Action: Copy, Res: 
   }
 
   fn build_state(&self, idx: usize) -> BeliefState<F> {
-    let mut state = BeliefState::new(Some(self.history_len), self.frame_dim);
+    let mut state = BeliefState::new(Some(self.history_len), /*self.frame_dim*/);
     /*if idx >= self.history_len - 1 {
       for offset in 0 .. self.history_len {
         state.push(self.frames[idx - (self.history_len - 1) + offset].next_obs.clone());

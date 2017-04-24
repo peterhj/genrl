@@ -34,6 +34,10 @@ impl Action for CartpoleAction {
 }
 
 impl DiscreteAction for CartpoleAction {
+  fn discrete_dim() -> usize {
+    2
+  }
+
   fn from_idx(idx: u32) -> CartpoleAction {
     match idx {
       0 => CartpoleAction::Plus,

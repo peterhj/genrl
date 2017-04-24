@@ -3,7 +3,8 @@
 //pub mod dpg;
 //pub mod aac_new;
 //pub mod adq_old;
-pub mod dq;
-pub mod dq_new;
 //pub mod pg;
-pub mod pg_new; // FIXME(20161214): disabled because of `InputShape3dKey`.
+
+//pub mod dq;
+//pub mod dq_new;
+//pub mod pg_new; // FIXME(20161214): disabled because of `InputShape3dKey`.

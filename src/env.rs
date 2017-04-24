@@ -10,7 +10,7 @@ use std::path::{Path};
 use std::rc::{Rc};
 
 pub trait Action: Clone {
-  fn dim() -> usize;
+  fn dim() -> usize { unimplemented!(); }
 }
 
 impl Action for f32 {
@@ -20,6 +20,7 @@ impl Action for f32 {
 }
 
 pub trait DiscreteAction: Action + Copy {
+  fn discrete_dim() -> usize;
   fn from_idx(idx: u32) -> Self where Self: Sized;
   fn idx(&self) -> u32;
 }
@@ -324,7 +325,7 @@ pub trait Env: Default {
   type Action: Action;
   type Response: Response;
 
-  /// Reset the environment according to the initial state distribution and
+  /// Reset the environment according to the restart state distribution and
   /// other initial configuration.
   fn reset<R>(&self, init: &Self::Init, rng: &mut R) where R: Rng + Sized;
   //fn reset(&self, init: &Self::Init, rng: &mut Xorshiftplus128Rng);

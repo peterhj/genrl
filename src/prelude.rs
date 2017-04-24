@@ -4,5 +4,6 @@ pub use env::{
 pub use features::{
   EnvObsRepr,
   EnvObsBuf,
+  SharedBeliefState,
   BeliefState,
 };
