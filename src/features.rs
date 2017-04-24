@@ -1,4 +1,4 @@
-use env::{Env};
+use env::{Env, MultiEnv};
 
 use densearray::prelude::*;
 use operator::prelude::*;
@@ -12,6 +12,10 @@ use std::sync::{Arc};
 pub trait EnvObsRepr<F>: Env {
   fn _obs_shape3d() -> (usize, usize, usize) { unimplemented!(); }
   fn observe(&self, rng: &mut Xorshiftplus128Rng) -> F;
+}
+
+pub trait MultiEnvObserve<F>: MultiEnv {
+  fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> F where R: Rng + Sized;
 }
 
 pub trait EnvObsBuf<F>: Env {

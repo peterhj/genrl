@@ -343,6 +343,32 @@ pub trait Env: Default {
   fn _save_png(&self, path: &Path) {}
 }
 
+pub trait MultiEnv: Default {
+  type Restart;
+  type Action: Action;
+  type Response: Response;
+
+  /// Reset the environment according to the restart state distribution and
+  /// other initial configuration.
+  fn reset<R>(&self, restart: &Self::Restart, rng: &mut R) where R: Rng + Sized;
+
+  /// The number of players.
+  fn num_players(&self) -> usize;
+
+  /// Check if the environment is at a terminal state (no more legal actions).
+  fn is_terminal(&self) -> bool;
+
+  /// Check which players can perform actions (i.e. are "active").
+  fn is_active_player(&self, player_rank: usize) -> bool;
+
+  /// Check if an action is legal. Can be expensive if this involves simulating
+  /// the action using `step`.
+  fn is_legal_multi_action(&self, multi_action: &[&Option<Self::Action>]) -> bool;
+
+  /// Try to execute an action, returning an error if the action is illegal.
+  fn step(&self, multi_action: &[&Option<Self::Action>]) -> Result<Vec<Option<Self::Response>>, ()>;
+}
+
 pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
   /// Extracting discrete actions.
   fn extract_all_actions_buf(&mut self, actions_buf: &mut Vec<Self::Action>);
