@@ -343,6 +343,13 @@ pub trait Env: Default {
   fn _save_png(&self, path: &Path) {}
 }
 
+pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
+  /// Extracting discrete actions.
+  fn extract_all_actions_buf(&mut self, actions_buf: &mut Vec<Self::Action>);
+  fn extract_legal_actions_buf(&mut self, actions_buf: &mut Vec<Self::Action>);
+  fn extract_legal_actions_set(&mut self, actions_set: &mut BitSet);
+}
+
 pub trait MultiEnv: Default {
   type Restart;
   type Action: Action;
@@ -363,17 +370,16 @@ pub trait MultiEnv: Default {
 
   /// Check if an action is legal. Can be expensive if this involves simulating
   /// the action using `step`.
-  fn is_legal_multi_action(&self, multi_action: &[&Option<Self::Action>]) -> bool;
+  fn is_legal_multi_action(&self, multi_action: &[Option<Self::Action>]) -> bool;
 
   /// Try to execute an action, returning an error if the action is illegal.
-  fn step(&self, multi_action: &[&Option<Self::Action>]) -> Result<Vec<Option<Self::Response>>, ()>;
+  fn step(&self, multi_action: &[Option<Self::Action>]) -> Result<Vec<Option<Self::Response>>, ()>;
 }
 
-pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
-  /// Extracting discrete actions.
-  fn extract_all_actions_buf(&mut self, actions_buf: &mut Vec<Self::Action>);
-  fn extract_legal_actions_buf(&mut self, actions_buf: &mut Vec<Self::Action>);
-  fn extract_legal_actions_set(&mut self, actions_set: &mut BitSet);
+pub trait MultiEnvDiscrete: MultiEnv {
+  fn num_discrete_actions(&self) -> usize;
+  fn get_discrete_action(&self, player_rank: usize, act_idx: u32) -> Self::Action;
+  fn get_discrete_action_index(&self, player_rank: usize, action: &Self::Action) -> u32;
 }
 
 pub trait EnvSerialize: Env {

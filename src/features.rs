@@ -14,12 +14,29 @@ pub trait EnvObsRepr<F>: Env {
   fn observe(&self, rng: &mut Xorshiftplus128Rng) -> F;
 }
 
-pub trait MultiEnvObserve<F>: MultiEnv {
-  fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> F where R: Rng + Sized;
-}
-
 pub trait EnvObsBuf<F>: Env {
   fn observe_buf(&self, rng: &mut Xorshiftplus128Rng, obs: &F);
+}
+
+pub trait MultiEnvObserve<Obs>: MultiEnv {
+  fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized;
+}
+
+pub trait MultiObs {
+  fn observer_rank(&self) -> usize;
+  fn num_observers(&self) -> usize;
+}
+
+pub trait MultiBeliefState<Obs>: Clone where Obs: MultiObs {
+  fn depth(&self) -> usize;
+  fn reset(&mut self);
+  fn append(&mut self, obs: Rc<Obs>);
+}
+
+pub trait SharedMultiBeliefState<Obs>: Clone where Obs: MultiObs {
+  fn depth(&self) -> usize;
+  fn reset(&mut self);
+  fn append(&mut self, obs: Arc<Obs>);
 }
 
 pub struct BeliefState<F> {

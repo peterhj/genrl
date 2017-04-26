@@ -1,6 +1,6 @@
 pub use env::{
   Action, DiscreteAction,
-  Env, MultiEnv,
+  Env, MultiEnv, MultiEnvDiscrete,
   Value, SumValue, Discount, DiscountedValue,
   Episode, EpisodeStep,
 };
@@ -8,6 +8,9 @@ pub use features::{
   EnvObsRepr,
   EnvObsBuf,
   MultiEnvObserve,
-  SharedBeliefState,
+  MultiObs,
+  MultiBeliefState,
+  SharedMultiBeliefState,
   BeliefState,
+  SharedBeliefState,
 };
