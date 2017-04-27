@@ -34,6 +34,7 @@ pub trait MultiBeliefState<Obs>: Clone where Obs: MultiObs {
 }
 
 pub trait SharedMultiBeliefState<Obs>: Clone where Obs: MultiObs {
+  fn _build(max_depth: Option<usize>) -> Self where Self: Sized;
   fn depth(&self) -> usize;
   fn reset(&mut self);
   fn append(&mut self, obs: Arc<Obs>);
@@ -116,6 +117,10 @@ impl<F> SharedBeliefState<F> {
   }
 
   pub fn len(&self) -> usize {
+    self.depth()
+  }
+
+  pub fn depth(&self) -> usize {
     self.obs_reprs.len()
   }
 
@@ -124,6 +129,10 @@ impl<F> SharedBeliefState<F> {
   }
 
   pub fn push(&mut self, obs: Arc<F>) {
+    self.append(obs);
+  }
+
+  pub fn append(&mut self, obs: Arc<F>) {
     if let Some(cap) = self.history_len {
       assert!(self.obs_reprs.len() <= cap);
       if self.obs_reprs.len() == cap {
