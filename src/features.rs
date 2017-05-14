@@ -40,6 +40,29 @@ pub trait SharedMultiBeliefState<Obs>: Clone where Obs: MultiObs {
   fn append(&mut self, obs: Arc<Obs>);
 }
 
+pub trait SharedMultiActionHistory: Clone {
+  fn _build(action_dim: usize, max_depth: Option<usize>) -> Self where Self: Sized;
+  fn depth(&self) -> usize;
+  fn reset(&mut self);
+  fn append(&mut self, multi_act_idx: Vec<Option<u32>>);
+}
+
+impl SharedMultiActionHistory for () {
+  fn _build(_action_dim: usize, _max_depth: Option<usize>) -> Self {
+    ()
+  }
+
+  fn depth(&self) -> usize {
+    0
+  }
+
+  fn reset(&mut self) {
+  }
+
+  fn append(&mut self, _multi_act_idx: Vec<Option<u32>>) {
+  }
+}
+
 pub struct BeliefState<F> {
   pub history_len:  Option<usize>,
   pub obs_reprs:    VecDeque<Rc<F>>,

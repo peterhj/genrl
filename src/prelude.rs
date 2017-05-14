@@ -11,6 +11,7 @@ pub use features::{
   MultiObs,
   MultiBeliefState,
   SharedMultiBeliefState,
+  SharedMultiActionHistory,
   BeliefState,
   SharedBeliefState,
 };

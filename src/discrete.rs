@@ -316,11 +316,11 @@ impl DiscreteDist32 {
   }
 
   pub fn reset(&mut self, weights: &[f32]) -> Result<(), ()> {
-    assert_eq!(self.len, weights.len());
+    assert!(self.len >= weights.len());
     self.zeros.clear();
     /*self.heap.data[self.heap.leaf_idx .. self.heap.leaf_idx + self.len]
       .copy_from_slice(&weights);*/
-    for j in 0 .. self.len {
+    for j in 0 .. weights.len() {
       let idx = self.heap.leaf_idx + j;
       let w = weights[j];
       /*if !(w >= 0.0) {
@@ -334,7 +334,7 @@ impl DiscreteDist32 {
       }
       self.heap.data[idx] = w;
     }
-    for j in self.len .. self.heap.leaf_cap {
+    for j in weights.len() .. self.heap.leaf_cap {
       let idx = self.heap.leaf_idx + j;
       self.zeros.set(idx, true);
       self.heap.data[idx] = 0.0;
@@ -363,7 +363,28 @@ impl DiscreteDist32 {
     }
   }
 
+  pub fn set(&mut self, j: usize, w: f32) {
+    assert!(j < self.len);
+    assert!(w >= 0.0);
+    let mut idx = self.heap.leaf_idx + j;
+    self.zeros.set(idx, w == 0.0);
+    self.heap.data[idx] = w;
+    while idx > self.heap.root() {
+      let prev_idx = idx;
+      let sib_idx = self.heap.sibling(prev_idx);
+      idx = self.heap.parent(prev_idx);
+      if self.zeros.get(prev_idx) && self.zeros.get(sib_idx) {
+        self.zeros.set(idx, true);
+      }
+      self.heap.data[idx] = self.heap.data[prev_idx] + self.heap.data[sib_idx];
+    }
+  }
+
   pub fn sample<R>(&mut self, rng: &mut R) -> Option<usize> where R: Rng {
+    self.try_sample(rng)
+  }
+
+  pub fn try_sample<R>(&mut self, rng: &mut R) -> Option<usize> where R: Rng {
     let mut idx = self.heap.root();
     let mut depth = 0;
     while idx < self.heap.leaf_idx {
