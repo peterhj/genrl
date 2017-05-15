@@ -41,14 +41,14 @@ pub trait SharedMultiBeliefState<Obs>: Clone where Obs: MultiObs {
 }
 
 pub trait SharedMultiActionHistory: Clone {
-  fn _build(action_dim: usize, max_depth: Option<usize>) -> Self where Self: Sized;
+  fn _build(num_players: usize, action_dim: usize, max_depth: Option<usize>) -> Self where Self: Sized;
   fn depth(&self) -> usize;
   fn reset(&mut self);
   fn append(&mut self, multi_act_idx: Vec<Option<u32>>);
 }
 
 impl SharedMultiActionHistory for () {
-  fn _build(_action_dim: usize, _max_depth: Option<usize>) -> Self {
+  fn _build(_num_players: usize, _action_dim: usize, _max_depth: Option<usize>) -> Self {
     ()
   }
 
