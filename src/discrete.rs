@@ -282,6 +282,9 @@ impl SlowDiscreteDist32 {
   }
 
   pub fn try_sample<R>(&mut self, rng: &mut R) -> Option<usize> where R: Rng {
+    if self.sum <= 0.0 {
+      return None;
+    }
     let u = rng.gen_range(0.0, self.sum);
     for j in 0 .. self.weights.len() {
       if u < self.cweights[j] {

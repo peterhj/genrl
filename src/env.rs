@@ -355,6 +355,8 @@ pub trait MultiEnv: Default {
   type Action: Action;
   type Response: Response;
 
+  fn shutdown(&self) {}
+
   /// Reset the environment according to the restart state distribution and
   /// other initial configuration.
   fn reset<R>(&self, restart: &Self::Restart, rng: &mut R) where R: Rng + Sized;
