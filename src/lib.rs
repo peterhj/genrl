@@ -8,6 +8,7 @@ extern crate iter_utils;
 //extern crate operator;
 extern crate rng;
 extern crate sharedmem;
+extern crate stopwatch;
 
 extern crate bit_set;
 extern crate rand;
@@ -18,6 +19,7 @@ pub mod env;
 //pub mod examples;
 pub mod features;
 pub mod kernels;
+pub mod monitor;
 //pub mod opt;
 pub mod prelude;
 pub mod replay;
