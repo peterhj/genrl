@@ -5,7 +5,7 @@ extern crate genrl_kernels;
 extern crate densearray;
 extern crate float;
 extern crate iter_utils;
-extern crate operator;
+//extern crate operator;
 extern crate rng;
 extern crate sharedmem;
 
@@ -15,10 +15,10 @@ extern crate rustc_serialize;
 
 pub mod discrete;
 pub mod env;
-pub mod examples;
+//pub mod examples;
 pub mod features;
 pub mod kernels;
-pub mod opt;
+//pub mod opt;
 pub mod prelude;
 pub mod replay;
 //pub mod wrappers;

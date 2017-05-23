@@ -20,6 +20,6 @@ densearray = "^0.1"
 float = "^0.1"
 iter_utils = "^0.1"
 #neuralops = { path = "../neuralops" }
-operator = { path = "../liboperator" }
+#operator = { path = "../liboperator" }
 rng = "^0.1"
 sharedmem = "^0.1"
