@@ -21,6 +21,7 @@ pub enum MonitorAction {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MonitorEvent {
   Shutdown,
+  Construct,
   Reset,
   Step,
   IsTerminal,
@@ -82,7 +83,7 @@ impl<E> Drop for MonitorEnv<E> {
   fn drop(&mut self) {
     self.tick.set(self.tick.get() + 1);
     let t = self.tick.get();
-    self.tx.send((t, MonitorAction::CtrlStop)).unwrap();
+    self.tx.send((t, MonitorAction::CtrlStop)).ok();
     self.h.take().unwrap().join().unwrap();
   }
 }
@@ -98,11 +99,17 @@ impl<E> Default for MonitorEnv<E> where E: MultiEnv {
       };
       worker.runloop();
     });
+    let tick = Cell::new(0);
+    tick.set(tick.get() + 1);
+    let t = tick.get();
+    tx.send((t, MonitorAction::StartEvent(MonitorEvent::Construct))).unwrap();
+    let env = E::default();
+    tx.send((t, MonitorAction::EndEvent(MonitorEvent::Construct))).unwrap();
     MonitorEnv{
-      tick: Cell::new(0),
+      tick: tick,
       tx:   tx,
       h:    Some(h),
-      env:  E::default(),
+      env:  env,
     }
   }
 }
