@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 genrl_kernels = { path = "kernels" }
 bit-set = "*"
+matches = "*"
 rand = "*"
 rustc-serialize = "*"
 densearray = "^0.1"

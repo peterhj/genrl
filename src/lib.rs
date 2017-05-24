@@ -5,6 +5,7 @@ extern crate genrl_kernels;
 extern crate densearray;
 extern crate float;
 extern crate iter_utils;
+#[macro_use] extern crate matches;
 //extern crate operator;
 extern crate rng;
 extern crate sharedmem;
