@@ -43,7 +43,7 @@ impl MonitorWorker {
       match self.rx.recv_timeout(Duration::from_millis(5000)) {
         Err(RecvTimeoutError::Timeout) => {
           if let Some((tick, event)) = self.active_event {
-            panic!("PANIC: MonitorEnv: timed out during an event: {} {:?}",
+            panic!("PANIC: MonitorWorker: timed out during an event: {} {:?}",
                 tick, event);
           }
         }
