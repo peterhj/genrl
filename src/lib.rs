@@ -1,4 +1,5 @@
 #![feature(core_intrinsics)]
+#![feature(specialization)]
 
 extern crate genrl_kernels;
 

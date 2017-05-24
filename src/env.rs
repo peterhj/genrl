@@ -1,6 +1,7 @@
-use rng::xorshift::*;
+use features::{MultiEnvObserve};
 
 use bit_set::{BitSet};
+use rng::xorshift::*;
 
 use rand::{Rng};
 use std::cell::{RefCell};
@@ -350,7 +351,7 @@ pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
   fn extract_legal_actions_set(&mut self, actions_set: &mut BitSet);
 }
 
-pub trait MultiEnv: Default {
+pub trait MultiEnv {
   type Restart;
   type Action: Action;
   type Response: Response;
