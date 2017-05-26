@@ -13,6 +13,17 @@ use std::sync::mpsc::{SyncSender, Receiver, RecvTimeoutError, sync_channel};
 use std::thread::{JoinHandle, spawn};
 use std::time::{Duration};
 
+pub trait MonitorSettings {
+  fn monitor_config() -> MonitorConfig;
+}
+
+pub struct MonitorConfig {
+  pub env_default_parallelism:  Option<usize>,
+  pub env_max_parallelism:      Option<usize>,
+  pub reset_target_latency:     Option<f64>,
+  pub reset_timeout:            Option<f64>,
+}
+
 #[derive(Clone, Default)]
 pub struct ObjectEnv<E> {
   env:  E,
@@ -80,13 +91,13 @@ impl<E> MultiEnvDiscrete for ObjectEnv<E> where E: MultiEnvDiscrete {
   }
 }
 
-impl<E, Obs> MultiEnvObserve<Obs> for ObjectEnv<E> where E: MultiEnv {
+impl<E, Obs: Send> MultiEnvObserve<Obs> for ObjectEnv<E> where E: MultiEnv {
   default fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized {
     unimplemented!();
   }
 }
 
-impl<E, Obs> MultiEnvObserve<Obs> for ObjectEnv<E> where E: MultiEnvObserve<Obs> {
+impl<E, Obs: Send> MultiEnvObserve<Obs> for ObjectEnv<E> where E: MultiEnvObserve<Obs> {
   fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized {
     self.env.observe(observer_rank, rng)
   }
@@ -123,7 +134,7 @@ pub struct MonitorEnvWorker {
 impl MonitorEnvWorker {
   pub fn runloop(&mut self) {
     loop {
-      match self.ctrl_rx.recv_timeout(Duration::from_millis(5000)) {
+      match self.ctrl_rx.recv_timeout(Duration::from_millis(10000)) {
         Err(RecvTimeoutError::Timeout) => {
           if let Some((tick, event)) = self.active_event {
             panic!("PANIC: MonitorEnvWorker: timed out during an event: {} {:?}",
@@ -283,7 +294,7 @@ impl<E> MultiEnvDiscrete for MonitorEnv<E> where E: MultiEnvDiscrete {
   }
 }
 
-impl<E, Obs> MultiEnvObserve<Obs> for MonitorEnv<E> where E: MultiEnvObserve<Obs> {
+impl<E, Obs: Send> MultiEnvObserve<Obs> for MonitorEnv<E> where E: MultiEnvObserve<Obs> {
   fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized {
     self.tick.set(self.tick.get() + 1);
     let t = self.tick.get();
@@ -328,15 +339,16 @@ pub enum AsyncEnvState<Restart> {
   Active,
 }
 
-pub struct AsyncResetEnvWorker<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs>, E::Restart: Clone + Eq {
+pub struct AsyncResetEnvWorker<E, Obs: Send> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs>, E::Restart: Clone + Eq {
   rank: usize,
+  epoch:    usize,
   rng:  Xorshiftplus128Rng,
   rx:   Receiver<(usize, AsyncEnvReq<E::Restart, E::Action>)>,
-  tx:   SyncSender<(usize, AsyncEnvReply<E::Restart, E::Action, E::Response, Obs>)>,
+  tx:   SyncSender<(usize, usize, AsyncEnvReply<E::Restart, E::Action, E::Response, Obs>)>,
   env:  E,
 }
 
-impl<E, Obs> AsyncResetEnvWorker<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs>, E::Restart: Clone + Eq {
+impl<E, Obs: Send> AsyncResetEnvWorker<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs>, E::Restart: Clone + Eq {
   pub fn runloop(&mut self) {
     loop {
       match self.rx.recv() {
@@ -381,7 +393,10 @@ impl<E, Obs> AsyncResetEnvWorker<E, Obs> where E: MultiEnv + MultiEnvDiscrete + 
               AsyncEnvReply::Observe{obs: obs}
             }
           };
-          self.tx.send((self.rank, reply)).unwrap();
+          match self.tx.send((self.rank, self.epoch, reply)) {
+            Err(_) => break,
+            Ok(_) => {}
+          }
         }
       }
     }
@@ -392,10 +407,15 @@ pub struct AsyncResetEnvImpl<E, Obs> where E: MultiEnv, E::Restart: 'static + Se
   env_ct:   usize,
   //rng:      Xorshiftplus128Rng,
   states:   Vec<AsyncEnvState<E::Restart>>,
+  baseclks: Vec<Stopwatch>,
+  clocks:   Vec<Stopwatch>,
+  epochs:   Vec<usize>,
   active:   Option<usize>,
-  order:    Vec<usize>,
+  queue:    Vec<usize>,
+  watch:    Stopwatch,
   txs:  Vec<SyncSender<(usize, AsyncEnvReq<E::Restart, E::Action>)>>,
-  rx:   Receiver<(usize, AsyncEnvReply<E::Restart, E::Action, E::Response, Obs>)>,
+  rptx: SyncSender<(usize, usize, AsyncEnvReply<E::Restart, E::Action, E::Response, Obs>)>,
+  rx:   Receiver<(usize, usize, AsyncEnvReply<E::Restart, E::Action, E::Response, Obs>)>,
   hs:   Vec<JoinHandle<()>>,
 }
 
@@ -404,19 +424,35 @@ pub struct AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: 'static + Send, 
   //_m:   PhantomData<fn (E)>,
 }
 
-impl<E, Obs> AsyncResetEnv<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+impl<E, Obs: Send> Default for AsyncResetEnv<E, Obs>
+where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default,
+      E::Restart: 'static + Send + Clone + Eq,
+      E::Action: 'static + Send,
+      E::Response: 'static + Send,
+      Obs: 'static + Send
+{
+  fn default() -> Self {
+    Self::new(4)
+  }
+}
+
+impl<E, Obs: Send> AsyncResetEnv<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
   pub fn new(env_ct: usize) -> Self {
     let mut states = vec![];
-    let mut order = vec![];
+    let mut baseclks = vec![];
+    let mut clocks = vec![];
+    let mut epochs = vec![];
+    let mut queue = vec![];
     let mut txs = vec![];
     let mut hs = vec![];
-    let (reply_tx, reply_rx) = sync_channel(1024);
+    let (reply_tx, reply_rx) = sync_channel(64);
     for rank in 0 .. env_ct {
-      let (req_tx, req_rx) = sync_channel(1024);
+      let (req_tx, req_rx) = sync_channel(64);
       let reply_tx = reply_tx.clone();
       let h = spawn(move || {
         let mut worker = AsyncResetEnvWorker{
           rank: rank,
+          epoch:    0,
           rng:  Xorshiftplus128Rng::zeros(),
           rx:   req_rx,
           tx:   reply_tx,
@@ -425,7 +461,10 @@ impl<E, Obs> AsyncResetEnv<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiE
         worker.runloop();
       });
       states.push(AsyncEnvState::Constructed);
-      order.push(rank);
+      baseclks.push(Stopwatch::new());
+      clocks.push(Stopwatch::new());
+      epochs.push(0);
+      queue.push(rank);
       txs.push(req_tx);
       hs.push(h);
     }
@@ -433,9 +472,14 @@ impl<E, Obs> AsyncResetEnv<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiE
       inner:    RefCell::new(AsyncResetEnvImpl{
         env_ct: env_ct,
         states: states,
+        baseclks:   baseclks,
+        clocks: clocks,
+        epochs: epochs,
         active: None,
-        order:  order,
+        queue:  queue,
+        watch:  Stopwatch::new(),
         txs:    txs,
+        rptx:   reply_tx,
         rx:     reply_rx,
         hs:     hs,
       }),
@@ -443,7 +487,13 @@ impl<E, Obs> AsyncResetEnv<E, Obs> where E: MultiEnv + MultiEnvDiscrete + MultiE
   }
 }
 
-impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+impl<E, Obs: Send> MultiEnv for AsyncResetEnv<E, Obs>
+where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default,
+      E::Restart: 'static + Send + Clone + Eq,
+      E::Action: 'static + Send,
+      E::Response: 'static + Send,
+      Obs: 'static + Send,
+{
   type Restart = E::Restart;
   type Action = E::Action;
   type Response = E::Response;
@@ -454,27 +504,44 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
 
   fn reset<R>(&self, restart: &Self::Restart, seed_rng: &mut R) where R: Rng + Sized {
     let mut inner = self.inner.borrow_mut();
+    for rank in 0 .. inner.env_ct {
+      inner.baseclks[rank].mark();
+    }
+    inner.queue.clear();
     if let Some(active_rank) = inner.active {
+      inner.active = None;
+      for i in 0 .. inner.env_ct {
+        if i != active_rank {
+          inner.queue.push(i);
+        }
+      }
       assert!(matches!(inner.states[active_rank], AsyncEnvState::Active));
+      inner.baseclks[active_rank].reset();
+      inner.clocks[active_rank].reset();
       let seed = [seed_rng.next_u64(), seed_rng.next_u64()];
       inner.txs[active_rank].send((active_rank, AsyncEnvReq::Reset{restart_cfg: restart.clone(), rng_seed: seed})).unwrap();
       inner.states[active_rank] = AsyncEnvState::WaitReset;
-      inner.active = None;
-    }
-    'reset_loop: loop {
+    } else {
       for i in 0 .. inner.env_ct {
-        let j = seed_rng.gen_range(i, inner.env_ct);
-        if i < j {
-          inner.order.swap(i, j);
-        }
-        let rank = inner.order[i];
+        inner.queue.push(i);
+      }
+    }
+    seed_rng.shuffle(&mut inner.queue);
+    'reset_loop: loop {
+      let queue = inner.queue.clone();
+      inner.queue.clear();
+      for &rank in queue.iter() {
+        //let rank = inner.queue[i];
         let mut do_reset = false;
+        let mut wait_reset = false;
         let mut is_ready = false;
         match inner.states[rank] {
           AsyncEnvState::Constructed => {
             do_reset = true;
           }
-          AsyncEnvState::WaitReset => {}
+          AsyncEnvState::WaitReset => {
+            wait_reset = true;
+          }
           AsyncEnvState::Ready{ref ready_restart} => {
             if ready_restart == restart {
               is_ready = true;
@@ -484,26 +551,64 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
           }
           _ => unreachable!(),
         }
-        if do_reset {
+        if wait_reset && inner.clocks[rank].mark().elapsed() > inner.baseclks[rank].elapsed() + 5.0 {
+          // FIXME: launch a new thread, because the old one stalled.
+          println!("WARNING: AsyncResetEnv: env rank: {} reset timed out, respawning...", rank);
+          let (req_tx, req_rx) = sync_channel(64);
+          let reply_tx = inner.rptx.clone();
+          let next_epoch = inner.epochs[rank] + 1;
+          let h = spawn(move || {
+            let mut worker = AsyncResetEnvWorker{
+              rank: rank,
+              epoch:    next_epoch,
+              rng:  Xorshiftplus128Rng::zeros(),
+              rx:   req_rx,
+              tx:   reply_tx,
+              env:  E::default(),
+            };
+            worker.runloop();
+          });
+          inner.states[rank] = AsyncEnvState::Constructed;
+          inner.epochs[rank] = next_epoch;
+          inner.baseclks[rank].reset();
+          inner.clocks[rank].reset();
+          inner.txs[rank] = req_tx;
+          inner.hs[rank] = h;
+          inner.queue.push(rank);
+          println!("WARNING: AsyncResetEnv: env rank: {} reset timed out, respawn complete", rank);
+        } else if do_reset {
+          inner.baseclks[rank].reset();
+          inner.clocks[rank].reset();
           let seed = [seed_rng.next_u64(), seed_rng.next_u64()];
           inner.txs[rank].send((rank, AsyncEnvReq::Reset{restart_cfg: restart.clone(), rng_seed: seed})).unwrap();
           inner.states[rank] = AsyncEnvState::WaitReset;
         } else if is_ready {
           inner.states[rank] = AsyncEnvState::Active;
           inner.active = Some(rank);
+          println!("DEBUG: AsyncResetEnv: reset: active rank: {}", rank);
           break 'reset_loop;
         }
       }
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      if inner.queue.len() > 0 {
+        continue 'reset_loop;
+      }
+      match inner.rx.recv_timeout(Duration::from_millis(5000)) {
+        Err(RecvTimeoutError::Timeout) => {
           // TODO
+          for rank in 0 .. inner.env_ct {
+            inner.queue.push(rank);
+          }
+          seed_rng.shuffle(&mut inner.queue);
         }
-        Ok((rank, reply)) => {
+        Err(_) => {
+          unimplemented!();
+        }
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
               inner.states[rank] = AsyncEnvState::Ready{ready_restart: restart_cfg};
+              inner.queue.push(rank);
             }
             _ => unreachable!(),
           }
@@ -518,20 +623,22 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::Step{action: multi_action.to_owned()})).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
               inner.states[rank] = AsyncEnvState::Ready{ready_restart: restart_cfg};
             }
             AsyncEnvReply::Step{res} => {
-              assert_eq!(active_rank, rank);
-              return res;
+              if epoch == inner.epochs[rank] {
+                assert_eq!(active_rank, rank);
+                return res;
+              }
             }
             _ => unreachable!(),
           }
@@ -546,20 +653,22 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::IsTerminal)).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
               inner.states[rank] = AsyncEnvState::Ready{ready_restart: restart_cfg};
             }
             AsyncEnvReply::IsTerminal{terminal} => {
-              assert_eq!(active_rank, rank);
-              return terminal;
+              if epoch == inner.epochs[rank] {
+                assert_eq!(active_rank, rank);
+                return terminal;
+              }
             }
             _ => unreachable!(),
           }
@@ -574,20 +683,22 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::NumPlayers)).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
               inner.states[rank] = AsyncEnvState::Ready{ready_restart: restart_cfg};
             }
             AsyncEnvReply::NumPlayers{num_players} => {
-              assert_eq!(active_rank, rank);
-              return num_players;
+              if epoch == inner.epochs[rank] {
+                assert_eq!(active_rank, rank);
+                return num_players;
+              }
             }
             _ => unreachable!(),
           }
@@ -605,19 +716,25 @@ impl<E, Obs> MultiEnv for AsyncResetEnv<E, Obs> where E: MultiEnv, E::Restart: '
   }
 }
 
-impl<E, Obs> MultiEnvDiscrete for AsyncResetEnv<E, Obs> where E: MultiEnvDiscrete, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+impl<E, Obs: Send> MultiEnvDiscrete for AsyncResetEnv<E, Obs> //where E: MultiEnvDiscrete + Default, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default,
+      E::Restart: 'static + Send + Clone + Eq,
+      E::Action: 'static + Send,
+      E::Response: 'static + Send,
+      Obs: 'static + Send,
+{
   fn num_discrete_actions(&self) -> usize {
     let mut inner = self.inner.borrow_mut();
     assert!(inner.active.is_some());
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::NumDiscreteActions)).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
@@ -640,12 +757,12 @@ impl<E, Obs> MultiEnvDiscrete for AsyncResetEnv<E, Obs> where E: MultiEnvDiscret
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::GetDiscreteAction{player_rank: player_rank, act_idx: act_idx})).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
@@ -668,12 +785,12 @@ impl<E, Obs> MultiEnvDiscrete for AsyncResetEnv<E, Obs> where E: MultiEnvDiscret
     let active_rank = inner.active.unwrap();
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::GetDiscreteActionIndex{player_rank: player_rank, action: action.clone()})).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));
@@ -691,7 +808,13 @@ impl<E, Obs> MultiEnvDiscrete for AsyncResetEnv<E, Obs> where E: MultiEnvDiscret
   }
 }
 
-impl<E, Obs> MultiEnvObserve<Obs> for AsyncResetEnv<E, Obs> where E: MultiEnvObserve<Obs>, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+impl<E, Obs: Send> MultiEnvObserve<Obs> for AsyncResetEnv<E, Obs> //where E: MultiEnvObserve<Obs> + Default, E::Restart: 'static + Send + Clone + Eq, E::Action: 'static + Send, E::Response: 'static + Send, Obs: 'static + Send {
+where E: MultiEnv + MultiEnvDiscrete + MultiEnvObserve<Obs> + Default,
+      E::Restart: 'static + Send + Clone + Eq,
+      E::Action: 'static + Send,
+      E::Response: 'static + Send,
+      Obs: 'static + Send,
+{
   fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized {
     let mut inner = self.inner.borrow_mut();
     assert!(inner.active.is_some());
@@ -699,12 +822,12 @@ impl<E, Obs> MultiEnvObserve<Obs> for AsyncResetEnv<E, Obs> where E: MultiEnvObs
     let seed = [rng.next_u64(), rng.next_u64()];
     inner.txs[active_rank].send((active_rank, AsyncEnvReq::Observe{observer_rank: observer_rank, rng_seed: seed})).unwrap();
     loop {
-      match inner.rx.recv_timeout(Duration::from_millis(10)) {
-        Err(RecvTimeoutError::Timeout) => {}
-        Err(RecvTimeoutError::Disconnected) => {
+      match inner.rx.recv() {
+        Err(_) => {
           // TODO
+          unimplemented!();
         }
-        Ok((rank, reply)) => {
+        Ok((rank, epoch, reply)) => if epoch == inner.epochs[rank] {
           match reply {
             AsyncEnvReply::Reset{restart_cfg} => {
               assert!(matches!(inner.states[rank], AsyncEnvState::WaitReset));

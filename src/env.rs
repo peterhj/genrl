@@ -352,9 +352,9 @@ pub trait DiscreteEnv: Env where Self::Action: DiscreteAction {
 }
 
 pub trait MultiEnv {
-  type Restart;
-  type Action: Action;
-  type Response: Response;
+  type Restart: Send;
+  type Action: Send + Action;
+  type Response: Send + Response;
 
   fn shutdown(&self) {}
 

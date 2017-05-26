@@ -18,11 +18,11 @@ pub trait EnvObsBuf<F>: Env {
   fn observe_buf(&self, rng: &mut Xorshiftplus128Rng, obs: &F);
 }
 
-pub trait MultiEnvObserve<Obs>: MultiEnv {
+pub trait MultiEnvObserve<Obs: Send>: MultiEnv {
   fn observe<R>(&self, observer_rank: usize, rng: &mut R) -> Obs where R: Rng + Sized;
 }
 
-pub trait MultiObs {
+pub trait MultiObs: Send {
   fn observer_rank(&self) -> usize;
   fn num_observers(&self) -> usize;
 }
